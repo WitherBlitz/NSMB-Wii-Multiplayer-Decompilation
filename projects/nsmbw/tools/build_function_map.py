@@ -1,0 +1,148 @@
+"""Build WiiCompiled's function map (MAP.txt) for NSMBW SMNE01 rev 1.
+
+Function starts = entry + direct-call targets + data pointers into code + code-materialized
+(lis/addi|ori) pointers into code + REL prolog/epilog/unresolved + exec-section starts.
+Names come from NSMBW-Decomp syms.txt and Newer's kamek_pal.x (both PAL v1), converted to
+E1 addresses with NSMBW-Updated's address-map.txt.
+"""
+import json
+import re
+import struct
+from pathlib import Path
+
+ROOT = Path(r"E:\NSMBWPort")
+GAME = ROOT / "game"
+BASE = 0x80000000
+OUT = ROOT / "wiicompiled" / "projects" / "nsmbw" / "MAP.txt"
+
+flat = (GAME / "nsmbw_flat.bin").read_bytes()
+ranges = [l.split() for l in (GAME / "ranges.txt").read_text().splitlines()]
+exec_ranges = [(int(s, 16), int(e, 16)) for k, s, e, _ in ranges if k == "exec"]
+
+
+def in_exec(a):
+    return (a & 3) == 0 and any(s <= a < e for s, e in exec_ranges)
+
+
+def word(a):
+    return struct.unpack_from(">I", flat, a - BASE)[0]
+
+
+# ---------------------------------------------------------------- P1 -> E1 address mapper
+def load_e1_mapper():
+    blocks, cur = {}, None
+    for raw in (ROOT / "maps" / "address-map.txt").read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        m = re.fullmatch(r"\[(\w+)\]", line)
+        if m:
+            cur = blocks.setdefault(m.group(1), {"extend": None, "ranges": []})
+            continue
+        if cur is None:
+            continue
+        if line.startswith("extend"):
+            cur["extend"] = line.split()[1]
+            continue
+        m = re.fullmatch(r"([0-9a-fA-F]+)-([0-9a-fA-F]+|\*)\s*:\s*([+-])0x([0-9a-fA-F]+)", line)
+        if m:
+            start = int(m.group(1), 16)
+            end = 0xFFFFFFFF if m.group(2) == "*" else int(m.group(2), 16)
+            delta = int(m.group(4), 16) * (1 if m.group(3) == "+" else -1)
+            cur["ranges"].append((start, end, delta))
+    e1 = blocks["E1"]
+    assert e1["extend"] == "P1"
+
+    def to_e1(p1):
+        for start, end, delta in e1["ranges"]:
+            if start <= p1 <= end:
+                return (p1 + delta) & 0xFFFFFFFF
+        return None  # removed / unmapped in E1
+    return to_e1
+
+
+to_e1 = load_e1_mapper()
+
+# ---------------------------------------------------------------- names
+names = {}
+dropped = 0
+THUNK = re.compile(r"^_(save|rest)(gpr|fpr)_(\d+)$")
+THUNK_RENAMED = re.compile(r"^_(save|rest)_(gpr|fpr)_\d+$")
+
+
+def add_name(p1, name):
+    global dropped
+    e1 = to_e1(p1)
+    if e1 is None:
+        dropped += 1
+        return
+    m = THUNK.match(name)
+    if m:  # translator expects _save_gpr_N / _rest_fpr_N ...; these beat aliases like __save_gpr
+        names[e1] = f"_{m.group(1)}_{m.group(2)}_{m.group(3)}"
+        return
+    if not THUNK_RENAMED.match(names.get(e1, "")):
+        names.setdefault(e1, name)
+
+
+for line in (ROOT / "nsmbw-decomp" / "syms.txt").read_text().splitlines():
+    if "=" in line:
+        n, a = line.strip().split("=")
+        add_name(int(a, 16), n.strip())
+for m in re.finditer(r"(\S+)\s*=\s*0x([0-9A-Fa-f]{8})\s*;", (ROOT / "maps" / "kamek_pal.x").read_text()):
+    add_name(int(m.group(2), 16), m.group(1))
+
+# ---------------------------------------------------------------- function starts
+starts = {0x80004050}
+sources = {"entry": 1}
+
+
+def add(a, why):
+    if in_exec(a) and word(a) != 0:
+        if a not in starts:
+            sources[why] = sources.get(why, 0) + 1
+        starts.add(a)
+
+
+for s, _e in exec_ranges:
+    add(s, "section start")
+for t in (GAME / "seeds_bl.txt").read_text().split():
+    add(int(t, 16), "bl target")
+for line in (GAME / "data_ptrs.txt").read_text().splitlines():
+    add(int(line.split()[1], 16), "data pointer")
+
+# lis rX,hi followed (within 8 insns) by addi/ori rY,rX,lo forming a code address
+for s, e in exec_ranges:
+    for a in range(s, e, 4):
+        w = word(a)
+        if (w >> 26) != 15 or ((w >> 16) & 31) != 0:  # lis = addis rD,0,imm
+            continue
+        rd, hi = (w >> 21) & 31, w & 0xFFFF
+        for b in range(a + 4, min(a + 36, e), 4):
+            x = word(b)
+            op, rs = x >> 26, (x >> 16) & 31
+            if op == 14 and rs == rd:  # addi
+                lo = x & 0xFFFF
+                add(((hi << 16) + (lo - 0x10000 if lo & 0x8000 else lo)) & 0xFFFFFFFF, "lis/addi pointer")
+                break
+            if op == 24 and ((x >> 21) & 31) == rd:  # ori rA,rS,imm (rS is bits 21-25)
+                add((hi << 16) | (x & 0xFFFF), "lis/ori pointer")
+                break
+
+layout = json.loads((GAME / "nsmbw_rel_layout.json").read_text())
+for m in layout["modules"]:
+    for k in ("prolog", "epilog", "unresolved"):
+        add(int(m[k], 16), "rel entry")
+        names.setdefault(int(m[k], 16), f"{m['name']}_{k}")
+
+for a in names:
+    add(a, "named symbol")
+
+lines = [f"{a:08x} {names.get(a, f'0x{a:08x}')}\n" for a in sorted(starts)]
+OUT.write_text("".join(lines))
+named = sum(1 for a in starts if a in names)
+print(f"function starts: {len(starts)}  named: {named}  (symbols dropped as unmapped in E1: {dropped})")
+for k, v in sources.items():
+    print(f"  {k}: +{v}")
+thunks = sorted((a, n) for a, n in names.items() if THUNK.match(n.replace('_gpr_', 'gpr_').replace('_fpr_', 'fpr_')) or n.startswith(('_save_', '_rest_')))
+print(f"save/restore thunk names: {len(thunks)}  e.g. {thunks[:2]}")
+print(f"wrote {OUT}")
