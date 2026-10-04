@@ -63,6 +63,8 @@ var preferCachedInputs = HasFlag(tail, "--prefer-cached-inputs");
 var dolFile = new Lazy<DolFile>(LoadDol);
 var relFile = new Lazy<RelFile?>(LoadRel);
 var image = new Lazy<ProgramImage>(LoadImage);
+// Branch targets outside the loaded image, reported once each (target -> first caller).
+var outOfImageTargets = new System.Collections.Concurrent.ConcurrentDictionary<uint, uint>();
 var canonicalIrStore = new CanonicalIrStore();
 // Hoisted out of the translator factory so the base pipeline can prewarm the
 // recursive ABI cache in one stable pass, exactly like translate-mod does.
@@ -3049,7 +3051,24 @@ IEnumerable<uint> DiscoverTranslationTargets(FunctionTranslationResult result)
 
 IEnumerable<uint> DiscoverDiscoveryTranslationTargets(FunctionDiscoveryResult result)
 {
-    return DiscoverTranslationTargetsCore(result.Instructions, result.LinearIr);
+    foreach (var target in DiscoverTranslationTargetsCore(result.Instructions, result.LinearIr))
+    {
+        // Debug-stub code (MetroTRK) branches into the low-memory exception vectors, which are not
+        // part of the loaded image. A function map normally keeps discovery away from them; without
+        // one, skip the target instead of aborting the whole run.
+        if (!image.Value.Contains(target, 4))
+        {
+            if (outOfImageTargets.TryAdd(target, result.EntryPoint))
+            {
+                Console.Error.WriteLine(
+                    $"[translator] warning: 0x{result.EntryPoint:X8} branches to 0x{target:X8}, outside the loaded image; not translated.");
+            }
+
+            continue;
+        }
+
+        yield return target;
+    }
 }
 
 IEnumerable<uint> DiscoverTranslationTargetsCore(
