@@ -24,7 +24,11 @@ public final class GameActivity extends SDLActivity
     /** Player 1's on-screen remote and motion (runtime/src/android/android_bridge.cpp). */
     static native void nativeSetTouchState(int buttons, boolean shake, float tilt);
 
+    /** The Display menu: aspect, render scale (480 lines per 1x), FPS counter (DisplaySettings). */
+    static native void nativeApplyDisplaySettings(int aspect, float renderScale, boolean showFps);
+
     private AppSettings settings;
+    private boolean bootWidescreen;  // the game reads 4:3 versus widescreen once, when it starts
     private TouchControlsView touch;
     private MotionInput motion;
     private boolean nativeReady;
@@ -35,6 +39,7 @@ public final class GameActivity extends SDLActivity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         settings = new AppSettings(this);
+        bootWidescreen = settings.aspectMode() != AppSettings.ASPECT_4_3;
         try {
             AppFiles.prepareRuntime(this);
             AppFiles.writeConfig(this, settings);
@@ -200,12 +205,28 @@ public final class GameActivity extends SDLActivity
                 .show();
     }
 
+    /** The aspect the game actually renders: Fill follows the screen, never narrower than 16:9. */
+    private float renderAspect() {
+        switch (settings.aspectMode()) {
+            case AppSettings.ASPECT_4_3: return 4f / 3f;
+            case AppSettings.ASPECT_16_9: return 16f / 9f;
+            default: {
+                final android.view.View decor = getWindow().getDecorView();
+                final int w = Math.max(decor.getWidth(), decor.getHeight());
+                final int h = Math.min(decor.getWidth(), decor.getHeight());
+                return h > 0 ? Math.max((float) w / h, 16f / 9f) : 16f / 9f;
+            }
+        }
+    }
+
     private void showResolutionChoice() {
         final float[] scales = AppSettings.RESOLUTION_SCALES;
         final String[] labels = new String[scales.length];
+        final float aspect = renderAspect();
         int selected = 2;
         for (int i = 0; i < scales.length; ++i) {
-            labels[i] = AppSettings.resolutionLabel(scales[i]);
+            final int lines = Math.round(480 * scales[i]);
+            labels[i] = AppSettings.resolutionLabel(scales[i]) + "  ·  " + Math.round(lines * aspect) + "×" + lines;
             if (Math.abs(scales[i] - settings.resolutionScale()) < 0.01f) selected = i;
         }
         new AlertDialog.Builder(this)
@@ -220,14 +241,28 @@ public final class GameActivity extends SDLActivity
                 .show();
     }
 
-    /** Display settings are written to Config.toml, which the runtime reads when the game starts. */
+    /**
+     * Display changes apply at once (the runtime picks them up at the next frame) and are saved to
+     * Config.toml for the next start. Only 4:3 versus widescreen waits for a restart, because the
+     * game asks for its aspect once, while it boots.
+     */
     private void displayChanged() {
         try {
             AppFiles.writeConfig(this, settings);
         } catch (Exception e) {
             Log.e(TAG, "could not save the display settings", e);
         }
-        Toast.makeText(this, "Applies the next time the game starts", Toast.LENGTH_SHORT).show();
+        if (nativeReady) {
+            try {
+                nativeApplyDisplaySettings(settings.aspectMode(), settings.resolutionScale(), settings.showFps());
+            } catch (UnsatisfiedLinkError e) {
+                Log.e(TAG, "display bridge missing from libmain.so", e);
+            }
+        }
+        if ((settings.aspectMode() != AppSettings.ASPECT_4_3) != bootWidescreen) {
+            Toast.makeText(this, "Switching between 4:3 and widescreen applies the next time the game starts",
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showControlsMenu() {

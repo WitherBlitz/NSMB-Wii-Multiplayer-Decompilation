@@ -14,15 +14,30 @@ import android.view.WindowInsets;
 
 /**
  * The on-screen Wii Remote, laid out the way the remote is held sideways: the cross-pad under the
- * left thumb, 1 and 2 under the right one. Every finger is tracked on its own; a finger that starts
- * on the pad steers it until lifted, a finger on the buttons may slide from one to another.
+ * left thumb, 1 and 2 under the right one.
+ *
+ * <p>Every finger is tracked on its own and stays live wherever it slides:
+ * <ul>
+ * <li>Over the buttons, whatever is under the finger is pressed, so a thumb can roll from 1 onto 2
+ * (or across A, Shake, + and -), pass through the gaps between them and pick up the next button.
+ * A finger that lands on empty space presses a button as soon as it slides onto one.</li>
+ * <li>1 and 2 reach a little further than the other buttons, so their areas overlap: a thumb
+ * resting on the seam holds both, for running jumps.</li>
+ * <li>On the cross-pad the direction follows the finger through all eight directions. A finger on
+ * the pad keeps steering it even when it drifts past the edge, and a finger that slides onto the
+ * pad from elsewhere takes it over.</li>
+ * <li>The menu button only opens when a press both starts and ends on it, never from a slide.</li>
+ * </ul>
  */
 final class TouchControlsView extends View {
     /** Bits as the native side expects them (VirtualRemote::TouchButton), plus local extras. */
     static final int LEFT = 0x001, RIGHT = 0x002, UP = 0x004, DOWN = 0x008;
     static final int ONE = 0x010, TWO = 0x020, A = 0x040, PLUS = 0x080, MINUS = 0x100;
     private static final int SHAKE = 0x1000, MENU = 0x2000;
-    private static final int PAD = 0x4000;  // pointer captured by the cross-pad
+
+    private static final int MODE_BUTTONS = 1;  // the finger presses whatever button it is over
+    private static final int MODE_PAD = 2;      // the finger steers the cross-pad until lifted
+    private static final int MODE_MENU = 3;     // the press started on the menu button
 
     interface Listener {
         void onTouchInput(int buttons, boolean shake);
@@ -32,20 +47,23 @@ final class TouchControlsView extends View {
     private static final class Button {
         final int bit;
         final String label;
+        final float reach;  // hit radius as a multiple of the drawn radius
         float x, y, r;
-        Button(int bit, String label) { this.bit = bit; this.label = label; }
+        Button(int bit, String label, float reach) { this.bit = bit; this.label = label; this.reach = reach; }
         boolean hit(float px, float py) {
-            final float dx = px - x, dy = py - y, reach = r * 1.25f;
-            return dx * dx + dy * dy <= reach * reach;
+            final float dx = px - x, dy = py - y, radius = r * reach;
+            return dx * dx + dy * dy <= radius * radius;
         }
     }
 
     private final Button[] buttons = {
-        new Button(TWO, "2"), new Button(ONE, "1"), new Button(A, "A"), new Button(SHAKE, "SHAKE"),
-        new Button(MINUS, "−"), new Button(PLUS, "+"), new Button(MENU, "⋯"),
+        new Button(TWO, "2", 1.4f), new Button(ONE, "1", 1.4f), new Button(A, "A", 1.25f),
+        new Button(SHAKE, "SHAKE", 1.25f), new Button(MINUS, "−", 1.3f), new Button(PLUS, "+", 1.3f),
+        new Button(MENU, "⋯", 1.3f),
     };
     private float padX, padY, padR;
-    private final SparseIntArray pointers = new SparseIntArray();  // pointer id -> bits it holds
+    private final SparseIntArray pointerModes = new SparseIntArray();  // pointer id -> MODE_*
+    private final SparseIntArray pointerBits = new SparseIntArray();   // pointer id -> bits it holds
     private int held;
     private Listener listener;
     private float opacity = 0.6f;
@@ -81,7 +99,8 @@ final class TouchControlsView extends View {
 
     /** Lets go of everything, e.g. when the app loses focus or a menu opens. */
     void release() {
-        pointers.clear();
+        pointerModes.clear();
+        pointerBits.clear();
         update(0);
     }
 
@@ -135,50 +154,79 @@ final class TouchControlsView extends View {
         }
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             final int i = e.getActionIndex();
-            pointers.put(e.getPointerId(i), press(e.getX(i), e.getY(i)));
+            press(e.getPointerId(i), e.getX(i), e.getY(i));
         } else if (action == MotionEvent.ACTION_MOVE) {
             for (int i = 0; i < e.getPointerCount(); ++i) {
-                final int id = e.getPointerId(i);
-                final int current = pointers.get(id, 0);
-                if ((current & PAD) != 0) {
-                    pointers.put(id, PAD | padDirection(e.getX(i), e.getY(i)));
-                } else if (current != 0 && (current & MENU) == 0) {
-                    final int slid = buttonAt(e.getX(i), e.getY(i));
-                    pointers.put(id, slid != MENU ? slid : 0);
-                }
+                slide(e.getPointerId(i), e.getX(i), e.getY(i));
             }
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             final int i = e.getActionIndex();
             final int id = e.getPointerId(i);
-            final int bits = pointers.get(id, 0);
-            pointers.delete(id);
-            if ((bits & MENU) != 0 && buttonAt(e.getX(i), e.getY(i)) == MENU && listener != null) {
+            final boolean openMenu = pointerModes.get(id, 0) == MODE_MENU && menuAt(e.getX(i), e.getY(i));
+            pointerModes.delete(id);
+            pointerBits.delete(id);
+            if (openMenu && listener != null) {
                 listener.onMenu();
             }
         }
         int combined = 0;
-        for (int i = 0; i < pointers.size(); ++i) {
-            combined |= pointers.valueAt(i);
+        for (int i = 0; i < pointerBits.size(); ++i) {
+            combined |= pointerBits.valueAt(i);
         }
-        update(combined & ~PAD);
+        update(combined);
         return true;
     }
 
-    private int press(float x, float y) {
-        if (controlsVisible) {
-            final float dx = x - padX, dy = y - padY;
-            if (dx * dx + dy * dy <= padR * padR * 1.6f) {
-                return PAD | padDirection(x, y);
-            }
+    private void press(int id, float x, float y) {
+        if (menuAt(x, y)) {
+            pointerModes.put(id, MODE_MENU);
+            pointerBits.put(id, MENU);
+        } else if (onPad(x, y)) {
+            pointerModes.put(id, MODE_PAD);
+            pointerBits.put(id, padDirection(x, y));
+        } else {
+            pointerModes.put(id, MODE_BUTTONS);
+            pointerBits.put(id, buttonsAt(x, y));
         }
-        return buttonAt(x, y);
     }
 
-    private int buttonAt(float x, float y) {
-        for (Button b : buttons) {
-            if ((controlsVisible || b.bit == MENU) && b.hit(x, y)) return b.bit;
+    private void slide(int id, float x, float y) {
+        final int mode = pointerModes.get(id, 0);
+        if (mode == MODE_PAD) {
+            pointerBits.put(id, padDirection(x, y));
+        } else if (mode == MODE_BUTTONS) {
+            if (onPad(x, y)) {
+                pointerModes.put(id, MODE_PAD);
+                pointerBits.put(id, padDirection(x, y));
+            } else {
+                pointerBits.put(id, buttonsAt(x, y));
+            }
+        } else if (mode == MODE_MENU) {
+            pointerBits.put(id, menuAt(x, y) ? MENU : 0);
         }
-        return 0;
+    }
+
+    private boolean onPad(float x, float y) {
+        if (!controlsVisible) return false;
+        final float dx = x - padX, dy = y - padY, reach = padR * 1.26f;
+        return dx * dx + dy * dy <= reach * reach;
+    }
+
+    private boolean menuAt(float x, float y) {
+        for (Button b : buttons) {
+            if (b.bit == MENU) return b.hit(x, y);
+        }
+        return false;
+    }
+
+    /** Every button under the point (1 and 2 overlap on their seam); never the menu. */
+    private int buttonsAt(float x, float y) {
+        if (!controlsVisible) return 0;
+        int bits = 0;
+        for (Button b : buttons) {
+            if (b.bit != MENU && b.hit(x, y)) bits |= b.bit;
+        }
+        return bits;
     }
 
     /** Eight-way: a direction counts within 67.5 degrees of its axis, so diagonals press two. */
