@@ -371,5 +371,5 @@ extern "C" void AXFXReverbStdExpCallback_8012b830(CpuContext* ctx) {
     ReverbStd::Render(stateAddr, frame);
 }
 
-REGISTER_NATIVE_FUNCTION_AS(0x8012B830, AXFXReverbStdExpCallback_8012b830,
+REGISTER_NATIVE_FUNCTION_AS(0x801A6D30, AXFXReverbStdExpCallback_8012b830,
                             "AXFXReverbStdExpCallback_8012b830");

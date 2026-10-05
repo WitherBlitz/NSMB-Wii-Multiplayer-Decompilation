@@ -250,7 +250,7 @@ private:
 // Guest address of OSLoadContext, which models rfi-style context restoration
 // and intentionally replaces the full guest register file instead of returning
 // like a normal ABI call. It can never be guarded.
-inline constexpr uint32_t kOSLoadContextAddress = 0x801A1F58u;
+inline constexpr uint32_t kOSLoadContextAddress = 0x801ACE30u;
 
 inline bool ShouldPreserveNonvolatileGprsForRawCpuCall(const TranslatedFunctionInfo* info) noexcept {
     return info->kind == FunctionKind::Native && info->address != kOSLoadContextAddress;

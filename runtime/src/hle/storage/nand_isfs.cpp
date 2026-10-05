@@ -426,14 +426,16 @@ extern "C" int32_t NAND_IOS_Open_HLE(uint32_t pathPtr, uint32_t mode) {
     int32_t fd = AllocateFd(hostPath, file, mode);
     return fd;
 }
-PPC_NATIVE_OVERRIDE(801938F8, NAND_IOS_Open_HLE, int32_t, (uint32_t pathPtr, uint32_t mode), (pathPtr, mode));
+PPC_NATIVE_OVERRIDE(80224C70, NAND_IOS_Open_HLE, int32_t, (uint32_t pathPtr, uint32_t mode), (pathPtr, mode));
 
 extern "C" void NAND_IOS_OpenBody_HLE_801938FC(CpuContext* ctx) {
     const int32_t result = NAND_IOS_Open_HLE(ctx->gpr[3], ctx->gpr[4]);
     ctx->gpr[3] = static_cast<uint32_t>(result);
     ctx->gpr[1] = ctx->gpr[1] + 32u;
 }
+#if 0  // NSMBW: NAND_IOS_OpenBody is not linked into NSMBW (was MKW-only)
 REGISTER_NATIVE_FUNCTION_AS(0x801938FC, NAND_IOS_OpenBody_HLE_801938FC, "NAND_IOS_OpenBody_HLE_801938FC");
+#endif
 
 extern "C" int32_t NAND_IOS_Close_HLE(uint32_t fd) {
     if (fd == ISFS_DEV_FD) {
@@ -462,7 +464,7 @@ extern "C" int32_t NAND_IOS_Close_HLE(uint32_t fd) {
     CloseFd(fd);
     return ISFS_OK;
 }
-PPC_NATIVE_OVERRIDE(80193AD8, NAND_IOS_Close_HLE, int32_t, (uint32_t fd), (fd));
+PPC_NATIVE_OVERRIDE(80224E60, NAND_IOS_Close_HLE, int32_t, (uint32_t fd), (fd));
 
 extern "C" int32_t NAND_IOS_Read_HLE(uint32_t fd, uint32_t bufferPtr, uint32_t length) {
     auto* handle = GetHandle(fd);
@@ -486,7 +488,7 @@ extern "C" int32_t NAND_IOS_Read_HLE(uint32_t fd, uint32_t bufferPtr, uint32_t l
     
     return static_cast<int32_t>(bytesRead);
 }
-PPC_NATIVE_OVERRIDE(80193C80, NAND_IOS_Read_HLE, int32_t, (uint32_t fd, uint32_t bufferPtr, uint32_t length), (fd, bufferPtr, length));
+PPC_NATIVE_OVERRIDE(80225010, NAND_IOS_Read_HLE, int32_t, (uint32_t fd, uint32_t bufferPtr, uint32_t length), (fd, bufferPtr, length));
 
 extern "C" int32_t NAND_IOS_Write_HLE(uint32_t fd, uint32_t bufferPtr, uint32_t length) {
     auto* handle = GetHandle(fd);
@@ -511,7 +513,7 @@ extern "C" int32_t NAND_IOS_Write_HLE(uint32_t fd, uint32_t bufferPtr, uint32_t 
     
     return static_cast<int32_t>(bytesWritten);
 }
-PPC_NATIVE_OVERRIDE(80193E88, NAND_IOS_Write_HLE, int32_t, (uint32_t fd, uint32_t bufferPtr, uint32_t length), (fd, bufferPtr, length));
+PPC_NATIVE_OVERRIDE(80225220, NAND_IOS_Write_HLE, int32_t, (uint32_t fd, uint32_t bufferPtr, uint32_t length), (fd, bufferPtr, length));
 
 extern "C" int32_t NAND_IOS_Seek_HLE(uint32_t fd, int32_t offset, int32_t whence) {
     auto* handle = GetHandle(fd);
@@ -528,7 +530,7 @@ extern "C" int32_t NAND_IOS_Seek_HLE(uint32_t fd, int32_t offset, int32_t whence
     handle->position = static_cast<uint32_t>(std::ftell(handle->file));
     return static_cast<int32_t>(handle->position);
 }
-PPC_NATIVE_OVERRIDE(80194070, NAND_IOS_Seek_HLE, int32_t, (uint32_t fd, int32_t offset, int32_t whence), (fd, offset, whence));
+PPC_NATIVE_OVERRIDE(80225410, NAND_IOS_Seek_HLE, int32_t, (uint32_t fd, int32_t offset, int32_t whence), (fd, offset, whence));
 
 // ============================================================================
 // IOS_Ioctl HLE - Handles filesystem commands
@@ -817,7 +819,7 @@ extern "C" void NAND_IOS_Ioctl_Entry_HLE(CpuContext* ctx) {
     ctx->gpr[3] = static_cast<uint32_t>(
         NAND_IOS_Ioctl_HLE(fd, cmd, inBufPtr, inLen, outBufPtr, outLen));
 }
-PPC_NATIVE_OVERRIDE_VOID(80194290, NAND_IOS_Ioctl_Entry_HLE, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(80225640, NAND_IOS_Ioctl_Entry_HLE, (CpuContext* ctx), (ctx));
 
 // ============================================================================
 // ISFS_OpenLib - Initialize ISFS
@@ -922,13 +924,13 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
 
             ctx->gpr[3] = heapBase;
             ctx->gpr[4] = heapSize;
-            ctx->lr = 0x80169BCCu;
-            InvokeDirectCpu<0x801949B8u>(ctx);
+            ctx->lr = 0x80226490u;
+            InvokeDirectCpu<0x80225D80u>(ctx);
             const uint32_t heapHandle = ctx->gpr[3];
 
             ctx->gpr[3] = heapBase + heapSize;
-            ctx->lr = 0x80169BCCu;
-            InvokeDirectCpu<0x80193040u>(ctx);
+            ctx->lr = 0x80226490u;
+            InvokeDirectCpu<0x80224380u>(ctx);
 
             ctx->gpr[3] = savedR3;
             ctx->gpr[4] = savedR4;
@@ -947,7 +949,7 @@ extern "C" void ISFS_OpenLib_HLE_80169BCC(CpuContext* ctx) {
     ctx->gpr[3] = static_cast<uint32_t>(ISFS_OpenLib_Initialize(ctx));
 }
 
-REGISTER_NATIVE_FUNCTION_AS(0x80169BCC, ISFS_OpenLib_HLE_80169BCC, "ISFS_OpenLib_HLE_80169BCC");
+REGISTER_NATIVE_FUNCTION_AS(0x80226490, ISFS_OpenLib_HLE_80169BCC, "ISFS_OpenLib_HLE_80169BCC");
 
 // ============================================================================
 // IOS_Ioctlv HLE - Vector Ioctl for complex ISFS operations
@@ -1146,4 +1148,4 @@ extern "C" void NAND_IOS_Ioctlv_Entry_HLE(CpuContext* ctx) {
     ctx->gpr[3] = static_cast<uint32_t>(
         NAND_IOS_Ioctlv_HLE(fd, cmd, numIn, numOut, vectorPtr));
 }
-PPC_NATIVE_OVERRIDE_VOID(801945E0, NAND_IOS_Ioctlv_Entry_HLE, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802259A0, NAND_IOS_Ioctlv_Entry_HLE, (CpuContext* ctx), (ctx));

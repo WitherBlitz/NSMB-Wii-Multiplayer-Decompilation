@@ -42,9 +42,9 @@ constexpr uint32_t kAxIramMmemAddr = 0x8027F820u;
 constexpr uint32_t kAxDramMmemAddr = 0x802F8200u;
 constexpr uint32_t kAxDramLength = 64u;
 constexpr uint32_t kAxDramDspAddr = 3282u;
-constexpr uint32_t kAxInitCallback = 0x80126948u;
-constexpr uint32_t kAxResumeCallback = 0x80126954u;
-constexpr uint32_t kAxDoneCallback = 0x801269A8u;
+constexpr uint32_t kAxInitCallback = 0x801A1C50u;
+constexpr uint32_t kAxResumeCallback = 0x801A1C60u;
+constexpr uint32_t kAxDoneCallback = 0x801A1CD0u;
 constexpr uint32_t kAxRequestCallback = 0x801269B8u;
 
 extern uint32_t g_axTaskPtr;

@@ -55,7 +55,7 @@ extern "C" void OS__GetTime_HLE(CpuContext* ctx)
     ctx->gpr[4] = lo;
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801AAD5C, OS__GetTime_HLE, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B5F80, OS__GetTime_HLE, (CpuContext* ctx), (ctx));
 
 
 // ----------------------------------------------------------------------------
@@ -82,4 +82,4 @@ extern "C" uint32_t OS____GetSystemTime_801aad7c(uint32_t /*r3_hi*/, uint32_t /*
     return hi;
 }
 
-PPC_NATIVE_OVERRIDE(801AAD7C, OS____GetSystemTime_801aad7c, uint32_t, (uint32_t r3_low, uint32_t r4_high, uint32_t r5_unused, int32_t r6_unused, uint32_t r7_unused, uint32_t r8_unused), (r3_low, r4_high, r5_unused, r6_unused, r7_unused, r8_unused));
+PPC_NATIVE_OVERRIDE(801B5FB0, OS____GetSystemTime_801aad7c, uint32_t, (uint32_t r3_low, uint32_t r4_high, uint32_t r5_unused, int32_t r6_unused, uint32_t r7_unused, uint32_t r8_unused), (r3_low, r4_high, r5_unused, r6_unused, r7_unused, r8_unused));

@@ -162,7 +162,7 @@ extern "C" void TaskThread_run_HLE_80242d7c(CpuContext* ctx) {
             cpu->gpr[3] = taskThread + kTaskMessageQueueOffset;
             cpu->gpr[4] = outMsgPtr;
             cpu->gpr[5] = 1; // OS_MESSAGE_BLOCK
-            InvokeIndirectCpu(0x801A7424u, cpu); // OSReceiveMessage
+            InvokeIndirectCpu(0x801B24C0u, cpu); // OSReceiveMessage
         }
 
         const uint32_t job = Memory::Read32(outMsgPtr);
@@ -198,7 +198,7 @@ extern "C" void TaskThread_run_HLE_80242d7c(CpuContext* ctx) {
                     cpu->gpr[3] = doneQueue;
                     cpu->gpr[4] = token;
                     cpu->gpr[5] = 0; // OS_MESSAGE_NOBLOCK
-                    InvokeIndirectCpu(0x801A735Cu, cpu); // OSSendMessage
+                    InvokeIndirectCpu(0x801B23F0u, cpu); // OSSendMessage
                 }
             }
         }

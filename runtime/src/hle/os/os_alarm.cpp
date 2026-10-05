@@ -345,7 +345,7 @@ extern "C" void OSSetAlarm_HLE_801a0870(CpuContext* ctx)
 
     OS__RestoreInterrupts_801a65d4(level);
 }
-PPC_NATIVE_OVERRIDE_VOID(801A0870, OSSetAlarm_HLE_801a0870, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801AB540, OSSetAlarm_HLE_801a0870, (CpuContext* ctx), (ctx));
 
 extern "C" void OS_HLE_ProcessAlarms(int maxToProcess)
 {
@@ -436,7 +436,7 @@ extern "C" void OS__SetPeriodicAlarm_801a08e0(CpuContext* ctx)
 }
 
 // Register the function
-PPC_NATIVE_OVERRIDE_VOID(801A08E0, OS__SetPeriodicAlarm_801a08e0, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801AB5B0, OS__SetPeriodicAlarm_801a08e0, (CpuContext* ctx), (ctx));
 
 // RFLiIsWorking (RFL, the Mii library) lives here because its whole job is to
 // pump this file's alarm queue: RFLInitRes spins on it waiting for async RFL
@@ -473,4 +473,6 @@ extern "C" uint32_t RFLiIsWorking_HLE_800bd860()
         return 0;
     }
 }
+#if 0  // NSMBW: RFLiIsWorking is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(800BD860, RFLiIsWorking_HLE_800bd860, uint32_t, (), ());
+#endif

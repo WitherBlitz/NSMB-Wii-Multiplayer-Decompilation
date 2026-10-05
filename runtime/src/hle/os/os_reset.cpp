@@ -35,7 +35,7 @@ static std::string ReadGuestStringSafe(uint32_t addr)
 
 } // namespace
 
-// 0x8012E5A4 -> PPCHalt
+// 0x801A9BA0 -> PPCHalt
 extern "C" void PPCHalt_8012E5A4()
 {
     // A halt is never a clean shutdown: the guest reaches it after OSPanic or an
@@ -52,9 +52,9 @@ extern "C" void PPCHalt_8012E5A4()
     std::exit(EXIT_FAILURE);
 }
 
-PPC_NATIVE_OVERRIDE_VOID(8012E5A4, PPCHalt_8012E5A4, (), ());
+PPC_NATIVE_OVERRIDE_VOID(801A9BA0, PPCHalt_8012E5A4, (), ());
 
-// 0x801A2660 -> OS::Panic
+// 0x801AD4E0 -> OS::Panic
 extern "C" void OS__Panic_801A2660_Cpu(CpuContext* ctx)
 {
     const uint32_t file_ptr = ctx ? ctx->gpr[3] : 0;
@@ -115,9 +115,9 @@ extern "C" void OS__Panic_801A2660_Cpu(CpuContext* ctx)
     std::exit(EXIT_FAILURE);
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801A2660, OS__Panic_801A2660_Cpu, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801AD4E0, OS__Panic_801A2660_Cpu, (CpuContext* ctx), (ctx));
 
-// 0x801A8A80 -> OSResetSystem
+// 0x801B3CC0 -> OSResetSystem
 extern "C" uint32_t OSResetSystem()
 {
     RT_LOGF(RT_TAG_OS, "OSResetSystem: simulating console reset\n");
@@ -131,12 +131,12 @@ extern "C" uint32_t OSResetSystem()
     return 0; // unreachable, but keeps the signature consistent with callers
 }
 
-PPC_NATIVE_OVERRIDE(801A8A80, OSResetSystem, uint32_t, (), ());
+PPC_NATIVE_OVERRIDE(801B3CC0, OSResetSystem, uint32_t, (), ());
 
-// 0x801AE58C -> exit(int status)
+// 0x801B89E0 -> exit(int status)
 extern "C" uint32_t Exit_801AE58C(int status)
 {
-    RT_LOGF(RT_TAG_OS, "exit(status=%d) called via 0x801AE58C\n", status);
+    RT_LOGF(RT_TAG_OS, "exit(status=%d) called via 0x801B89E0\n", status);
     std::fflush(stderr);
     if (status != 0) {
         const std::string details =
@@ -150,4 +150,4 @@ extern "C" uint32_t Exit_801AE58C(int status)
     return static_cast<uint32_t>(status);
 }
 
-PPC_NATIVE_OVERRIDE(801AE58C, Exit_801AE58C, uint32_t, (int status), (status));
+PPC_NATIVE_OVERRIDE(801B89E0, Exit_801AE58C, uint32_t, (int status), (status));

@@ -73,13 +73,10 @@ int32_t ComputeThreadEffectivePriority(uint32_t threadPtr)
 
 bool IsThpVideoDecoderEntry(uint32_t entryFunc)
 {
-    switch (entryFunc) {
-    case 0x805529A8u:
-    case 0x80552A74u:
-        return true;
-    default:
-        return false;
-    }
+    // Mario Kart Wii's THP decoder threads (0x805529A8 / 0x80552A74) needed GQR presets.
+    // NSMBW ships no THP video and no THP player code, so no thread entry qualifies.
+    (void)entryFunc;
+    return false;
 }
 
 void InsertThreadIntoQueueByPriority(uint32_t queuePtr, uint32_t threadPtr, int32_t priority)
@@ -216,7 +213,7 @@ void UnlockAllThreadMutexes(CpuContext* cpu, uint32_t threadPtr)
     }
     CpuContextScope scope(cpu);
     cpu->gpr[3] = threadPtr;
-    InvokeIndirectCpu(0x801A8088u, cpu); // __OSUnlockAllMutex
+    InvokeIndirectCpu(0x801B3010u, cpu); // __OSUnlockAllMutex
 }
 
 // Shared tail of OSExitThread/OSCancelThread: clears context, delists if detached, marks
@@ -247,7 +244,7 @@ void TerminateThreadCommon(CpuContext* cpu, uint32_t threadPtr, bool publishExit
 // Fiber-based threading HLE: each guest OSThread gets a host fiber for cooperative
 // context switching without blocking the main thread.
 
-// OSCreateThread (0x801a9e84)
+// OSCreateThread (0x801b5130)
 // Creates a new guest thread and associates a host fiber with it.
 extern "C" void OSCreateThread_HLE_801a9e84(CpuContext* ctx)
 {
@@ -311,7 +308,7 @@ extern "C" void OSCreateThread_HLE_801a9e84(CpuContext* ctx)
             cpu->gpr[3] = threadPtr;
             cpu->gpr[4] = entryFunc;
             cpu->gpr[5] = alignedStack - 8;
-            InvokeIndirectCpu(0x801A20BCu, cpu); // OSInitContext
+            InvokeIndirectCpu(0x801ACFB0u, cpu); // OSInitContext
         }
 
         if (IsThpVideoDecoderEntry(entryFunc)) {
@@ -325,7 +322,7 @@ extern "C" void OSCreateThread_HLE_801a9e84(CpuContext* ctx)
 
         }
 
-        ::Memory::Write32(threadPtr + 0x84u, 0x801AA0F0u); // LR = OSExitThread
+        ::Memory::Write32(threadPtr + 0x84u, 0x801B53A0u); // LR = OSExitThread
         ::Memory::Write32(threadPtr + 0x0Cu, entryArg);    // r3 = argument
 
         // Stack info
@@ -338,11 +335,11 @@ extern "C" void OSCreateThread_HLE_801a9e84(CpuContext* ctx)
         ::Memory::Write32(threadPtr + 0x310u, 0);
         ::Memory::Write32(threadPtr + 0x314u, 0);
 
-        // Match the original OSCreateThread slow-path initialization that runs
-        // once scheduler globals are live. THP worker threads depend on these
-        // queue/list blocks being fully zeroed.
-        constexpr uint32_t kSchedulerInitFlagAddr = 0x80347130u;
-        constexpr uint32_t kThreadAttrSourceAddr = 0x80385AA8u;
+        // Match the original OSCreateThread: when a floating-point exception handler is installed
+        // (__OSErrorTable[OS_ERROR_FPE] != NULL) the new thread gets FE0|FE1 in SRR1, the FPSAVED
+        // state bit and an FPSCR built from __OSFpscrEnableBits.
+        constexpr uint32_t kSchedulerInitFlagAddr = 0x8038E5D0u;  // &__OSErrorTable[16]
+        constexpr uint32_t kThreadAttrSourceAddr = 0x80429508u;   // __OSFpscrEnableBits
         if (Memory::Contains(kSchedulerInitFlagAddr, 4) &&
             ::Memory::Read32(kSchedulerInitFlagAddr) != 0) {
             uint32_t srr1 = ::Memory::Read32(threadPtr + 0x19Cu);
@@ -398,7 +395,7 @@ extern "C" void OSCreateThread_HLE_801a9e84(CpuContext* ctx)
         cpu->gpr[3] = 0; // Return failure
     }
 }
-PPC_NATIVE_OVERRIDE_VOID(801A9E84, OSCreateThread_HLE_801a9e84, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B5130, OSCreateThread_HLE_801a9e84, (CpuContext* ctx), (ctx));
 
 extern "C" void OSExitThread_HLE_801aa0f0(CpuContext* ctx)
 {
@@ -424,7 +421,7 @@ extern "C" void OSExitThread_HLE_801aa0f0(CpuContext* ctx)
 
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA0F0, OSExitThread_HLE_801aa0f0, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B53A0, OSExitThread_HLE_801aa0f0, (CpuContext* ctx), (ctx));
 
 extern "C" void OSCancelThread_HLE_801aa1d4(CpuContext* ctx)
 {
@@ -466,7 +463,7 @@ extern "C" void OSCancelThread_HLE_801aa1d4(CpuContext* ctx)
 
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA1D4, OSCancelThread_HLE_801aa1d4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B5490, OSCancelThread_HLE_801aa1d4, (CpuContext* ctx), (ctx));
 
 extern "C" void OSJoinThread_HLE_801aa3ac(CpuContext* ctx)
 {
@@ -525,7 +522,7 @@ extern "C" void OSJoinThread_HLE_801aa3ac(CpuContext* ctx)
     OS__RestoreInterrupts_801a65d4(irqState);
     cpu->gpr[3] = result;
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA3AC, OSJoinThread_HLE_801aa3ac, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B5670, OSJoinThread_HLE_801aa3ac, (CpuContext* ctx), (ctx));
 
 extern "C" void OSDetachThread_HLE_801aa4ec(CpuContext* ctx)
 {
@@ -555,7 +552,7 @@ extern "C" void OSDetachThread_HLE_801aa4ec(CpuContext* ctx)
 
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA4EC, OSDetachThread_HLE_801aa4ec, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B57C0, OSDetachThread_HLE_801aa4ec, (CpuContext* ctx), (ctx));
 
 extern "C" void OSSuspendThread_HLE_801aa6a8(CpuContext* ctx)
 {
@@ -611,9 +608,9 @@ extern "C" void OSSuspendThread_HLE_801aa6a8(CpuContext* ctx)
 
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA6A8, OSSuspendThread_HLE_801aa6a8, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B5B00, OSSuspendThread_HLE_801aa6a8, (CpuContext* ctx), (ctx));
 
-// OSResumeThread (0x801aa58c)
+// OSResumeThread (0x801b5860)
 // Resumes a suspended thread, making it eligible for scheduling.
 extern "C" void OSResumeThread_HLE_801aa58c(CpuContext* ctx)
 {
@@ -714,4 +711,4 @@ extern "C" void OSResumeThread_HLE_801aa58c(CpuContext* ctx)
     
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA58C, OSResumeThread_HLE_801aa58c, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(801B5860, OSResumeThread_HLE_801aa58c, (CpuContext* ctx), (ctx));

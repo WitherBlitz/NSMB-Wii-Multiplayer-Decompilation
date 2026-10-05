@@ -68,8 +68,12 @@ static void EGG__DrawGX__SetVtxState_HLE(uint32_t state) {
     default: break;
     }
 }
+#if 0  // NSMBW: MKW switch-case label; its function is native in NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE_VOID(8021b344, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
+#endif
+#if 0  // NSMBW: EGGDrawGX__SetVtxState is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE_VOID(8021b688, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
+#endif
 
 extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) {
     const uint32_t self = ctx->gpr[3];
@@ -115,8 +119,8 @@ PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2b
 // ============================================================================
 
 extern "C" void EGG__AsyncDisplay__endRender_HLE_8020ff9c(CpuContext* ctx) {
-    uint32_t p = ctx->gpr[3]; ctx->gpr[3] = p; ctx->lr = 0x8020FF9C;
-    InvokeIndirectCpu(0x80219FB4u, ctx);
-    InvokeIndirectCpu(0x8016ED50u, ctx);
+    uint32_t p = ctx->gpr[3]; ctx->gpr[3] = p; ctx->lr = 0x802BB820;
+    InvokeIndirectCpu(0x802BAED0u, ctx);
+    InvokeIndirectCpu(0x801C51B0u, ctx);
 }
-PPC_NATIVE_OVERRIDE_VOID(8020FF9C, EGG__AsyncDisplay__endRender_HLE_8020ff9c, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802BB820, EGG__AsyncDisplay__endRender_HLE_8020ff9c, (CpuContext* ctx), (ctx));

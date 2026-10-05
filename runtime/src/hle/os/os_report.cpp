@@ -202,4 +202,4 @@ extern "C" void OS__Report_801a25d0(CpuContext* ctx)
     HLE_LogOSReport(ctx, fmt_str);
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801A25D0, OS__Report_801a25d0, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(8015F730, OS__Report_801a25d0, (CpuContext* ctx), (ctx));

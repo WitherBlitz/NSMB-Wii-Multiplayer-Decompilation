@@ -98,7 +98,9 @@ extern "C" uint32_t PAD__Init_HLE()
 {
     return PADInit() ? 1u : 0u;
 }
+#if 0  // NSMBW: PADInit is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(801AF2F0, PAD__Init_HLE, uint32_t, (), ());
+#endif
 
 // PADRead: gathers every GameCube pad source for the frame and writes the statuses to guest memory.
 extern "C" uint32_t PAD__Read_HLE(uint32_t statusPtr)
@@ -130,19 +132,25 @@ extern "C" uint32_t PAD__Read_HLE(uint32_t statusPtr)
 
     return rumbleMask;
 }
+#if 0  // NSMBW: PADRead is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(801AF44C, PAD__Read_HLE, uint32_t, (uint32_t statusPtr), (statusPtr));
+#endif
 
 extern "C" uint32_t PAD__Reset_HLE(uint32_t mask)
 {
     return PADReset(mask) ? 1u : 0u;
 }
+#if 0  // NSMBW: PADReset is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(801AF0DC, PAD__Reset_HLE, uint32_t, (uint32_t mask), (mask));
+#endif
 
 extern "C" uint32_t PAD__Recalibrate_HLE(uint32_t mask)
 {
     return PADRecalibrate(mask) ? 1u : 0u;
 }
+#if 0  // NSMBW: PADRecalibrate is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(801AF1E4, PAD__Recalibrate_HLE, uint32_t, (uint32_t mask), (mask));
+#endif
 
 extern "C" void PAD__ControlMotor_HLE(int32_t chan, uint32_t command)
 {
@@ -151,4 +159,6 @@ extern "C" void PAD__ControlMotor_HLE(int32_t chan, uint32_t command)
     }
     PADControlMotor(chan, command);
 }
+#if 0  // NSMBW: PADControlMotor is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE_VOID(801AF908, PAD__ControlMotor_HLE, (int32_t chan, uint32_t command), (chan, command));
+#endif

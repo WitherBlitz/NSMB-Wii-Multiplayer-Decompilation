@@ -24,7 +24,8 @@ extern std::atomic<bool> g_interrupts_enabled;
 // observable state, not just bookkeeping.
 extern std::atomic<uint32_t> g_interrupt_mask;
 
-constexpr uint32_t kInterruptHandlerTablePtrAddr = 0x803868f8u;
+// NSMBW SMNE01 rev 1 addresses (symbols from the cracked Shield symbol table, converted to E1).
+constexpr uint32_t kInterruptHandlerTablePtrAddr = 0x8042a6d8u;  // InterruptHandlerTable
 constexpr uint32_t kInterruptHandlerTableAddr = 0x80003040u;
 constexpr size_t kInterruptHandlerTableBytes = 0x80u;
 constexpr uint32_t kInterruptMaskLoAddr = 0x800000c4u;
@@ -36,17 +37,17 @@ constexpr uint32_t kThreadListHeadAddr = 0x800000dcu;    // First thread in thre
 constexpr uint32_t kThreadListTailAddr = 0x800000e0u;    // Last added thread (tail of thread list)
 constexpr uint32_t kOSRunningContextAddr = 0x800000e4u;  // Currently running thread context
 
-constexpr uint32_t kDefaultThreadContextAddr = 0x80347498u;
-constexpr uint32_t kIdleThreadContextAddr = 0x803478b0u;
-constexpr uint32_t kThreadQueueArrayAddr = 0x803477b0u;
+constexpr uint32_t kDefaultThreadContextAddr = 0x8038e938u;  // DefaultThread
+constexpr uint32_t kIdleThreadContextAddr = 0x8038ed50u;     // IdleContext
+constexpr uint32_t kThreadQueueArrayAddr = 0x8038ec50u;      // RunQueue[32]
 constexpr size_t kThreadQueueArrayBytes = 0x100u;
-constexpr uint32_t kSwitchThreadCallbackPtrAddr = 0x80385ae0u;
-constexpr uint32_t kSchedulerReschedCounterAddr = 0x8038691cu;
-constexpr uint32_t kSchedulerPendingFlagAddr = 0x80386920u;
+constexpr uint32_t kSwitchThreadCallbackPtrAddr = 0x80429530u;  // SwitchThreadCallback
+constexpr uint32_t kSchedulerReschedCounterAddr = 0x8042a704u;  // RunQueueHint
+constexpr uint32_t kSchedulerPendingFlagAddr = 0x8042a708u;     // RunQueueBits
 // RVL OS uses this as the OSDisableScheduler/OSEnableScheduler nesting count.
 // SelectThread exits early while the count is non-zero.
-constexpr uint32_t kSchedulerIdleFlagAddr = 0x80386918u;
-constexpr uint32_t kAlarmQueueOffsetFromR13 = 0x6360u;
+constexpr uint32_t kSchedulerIdleFlagAddr = 0x8042a700u;  // Reschedule
+constexpr uint32_t kAlarmQueueOffsetFromR13 = 0x5000u;   // AlarmQueue = 0x8042a680 = r13 - 0x5000
 
 constexpr uint32_t kThreadStateOffset = 0x2C8u;
 constexpr uint32_t kThreadAttrOffset = 0x2CAu;

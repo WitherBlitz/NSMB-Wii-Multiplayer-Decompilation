@@ -31,7 +31,7 @@ constexpr uint32_t kEggActiveScreenPtr = 0x80386F14u;
 constexpr uint32_t kEggScreenProjScaleX = 0x80386F20u;
 constexpr uint32_t kEggScreenProjScaleY = 0x80386F24u;
 
-constexpr uint32_t kEggScreenAspectHandler = 0x8023E53Cu;
+constexpr uint32_t kEggScreenAspectHandler = 0x802D1B50u;
 
 constexpr uint32_t kMkwUpdateAllScreens = 0x805653D0u;
 constexpr uint32_t kMkwGfxDrawList = 0x809C1830u;
@@ -39,7 +39,7 @@ constexpr uint32_t kSystemManagerInstance = 0x80386000u;
 
 // The draw list is an nw4r::ut::List: +0x00 head, +0x04 tail, +0x08 u16 count,
 // +0x0A u16 link offset, with next = *(node + linkOffset + 4) (List_GetNext,
-// 0x800AF180).
+// 0x80228FF0).
 constexpr uint32_t kMkwGfxDrawListLinkOffset = 0x0Au;
 
 constexpr uint32_t kMkwGfxOffscreenList = 0x809C183Cu;

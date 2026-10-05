@@ -11,4 +11,6 @@ extern "C" uint32_t Stub_8002001C(uint32_t ctx, int code)
     return 0;
 }
 
+#if 0  // NSMBW: Stub is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(8002001C, Stub_8002001C, uint32_t, (uint32_t ctx, int code), (ctx, code));
+#endif

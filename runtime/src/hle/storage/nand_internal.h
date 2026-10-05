@@ -154,7 +154,7 @@ enum NANDResult {
 
 // NANDFileInfo::openFlag (offset 0x8a). The RVL NAND library uses distinct values for
 // plain and safe handles so NANDClose/NANDSafeClose can reject the wrong pairing
-// (see nandOpen/nandClose/nandSafeOpen/nandSafeClose at 0x8019C800..0x8019CF30).
+// (see nandOpen/nandClose/nandSafeOpen/nandSafeClose at 0x801D95B0..0x8019CF30).
 enum NANDOpenFlag {
     NAND_OPEN_FLAG_NONE = 0,
     NAND_OPEN_FLAG_OPEN = 1,               // NANDOpen

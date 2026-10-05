@@ -68,7 +68,7 @@ extern "C" void GX__LoadLightObjImm_80170320(uint32_t la, uint32_t lid) {
     InitializeHostLightFromGuest(host, la);
     GXLoadLightObjImm(&host, static_cast<GXLightID>(lid));
 }
-PPC_NATIVE_OVERRIDE_VOID(80170320, GX__LoadLightObjImm_80170320, (uint32_t la, uint32_t lid), (la, lid));
+PPC_NATIVE_OVERRIDE_VOID(801C6880, GX__LoadLightObjImm_80170320, (uint32_t la, uint32_t lid), (la, lid));
 
 // ============================================================================
 // Channel Control
@@ -79,19 +79,19 @@ extern "C" void GX__SetChanAmbColor_8017039c(uint32_t c, uint32_t cp) {
     GXColor color = DecodeGxColor(Memory::Read32(cp));
     GXSetChanAmbColor((GXChannelID)c, color);
 }
-PPC_NATIVE_OVERRIDE_VOID(8017039c, GX__SetChanAmbColor_8017039c, (uint32_t c, uint32_t cp), (c, cp));
+PPC_NATIVE_OVERRIDE_VOID(801c6900, GX__SetChanAmbColor_8017039c, (uint32_t c, uint32_t cp), (c, cp));
 
 extern "C" void GX__SetChanMatColor_80170474(uint32_t c, uint32_t cp) {
     EnsureAuroraFrameActive();
     GXColor color = DecodeGxColor(Memory::Read32(cp));
     GXSetChanMatColor((GXChannelID)c, color);
 }
-PPC_NATIVE_OVERRIDE_VOID(80170474, GX__SetChanMatColor_80170474, (uint32_t c, uint32_t cp), (c, cp));
+PPC_NATIVE_OVERRIDE_VOID(801C69E0, GX__SetChanMatColor_80170474, (uint32_t c, uint32_t cp), (c, cp));
 
 extern "C" void GX__SetNumChans_8017054c(uint32_t n) { GXSetNumChans((u8)n); }
-PPC_NATIVE_OVERRIDE_VOID(8017054c, GX__SetNumChans_8017054c, (uint32_t n), (n));
+PPC_NATIVE_OVERRIDE_VOID(801c6ac0, GX__SetNumChans_8017054c, (uint32_t n), (n));
 
 extern "C" void GX__SetChanCtrl_80170570(uint32_t ch, uint32_t en, uint32_t as, uint32_t ms, uint32_t lm, uint32_t df, uint32_t af) {
     GXSetChanCtrl((GXChannelID)ch, en!=0, (GXColorSrc)as, (GXColorSrc)ms, lm, (GXDiffuseFn)df, (GXAttnFn)af);
 }
-PPC_NATIVE_OVERRIDE_VOID(80170570, GX__SetChanCtrl_80170570, (uint32_t ch, uint32_t en, uint32_t as, uint32_t ms, uint32_t lm, uint32_t df, uint32_t af), (ch, en, as, ms, lm, df, af));
+PPC_NATIVE_OVERRIDE_VOID(801C6AF0, GX__SetChanCtrl_80170570, (uint32_t ch, uint32_t en, uint32_t as, uint32_t ms, uint32_t lm, uint32_t df, uint32_t af), (ch, en, as, ms, lm, df, af));

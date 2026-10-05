@@ -8,6 +8,7 @@ E1 addresses with NSMBW-Updated's address-map.txt.
 import json
 import re
 import struct
+import sys
 from pathlib import Path
 
 ROOT = Path(r"E:\NSMBWPort")
@@ -88,23 +89,63 @@ for line in (ROOT / "nsmbw-decomp" / "syms.txt").read_text().splitlines():
     if "=" in line:
         n, a = line.strip().split("=")
         add_name(int(a, 16), n.strip())
+# RootCubed's cracked symbols, already converted to E1 by resolve_sdk_symbols.py (mangled names).
+for line in (ROOT / "maps" / "nsmbw_e1_symbols.tsv").read_text(encoding="utf-8").splitlines():
+    e1, mangled, _dem = line.split("\t")
+    a = int(e1, 16)
+    m = THUNK.match(mangled)
+    if m:
+        names[a] = f"_{m.group(1)}_{m.group(2)}_{m.group(3)}"
+    elif not THUNK_RENAMED.match(names.get(a, "")):
+        names.setdefault(a, mangled)
 for m in re.finditer(r"(\S+)\s*=\s*0x([0-9A-Fa-f]{8})\s*;", (ROOT / "maps" / "kamek_pal.x").read_text()):
     add_name(int(m.group(2), 16), m.group(1))
+
+# Exact main.dol function starts and lengths from the Shield build's symbol table (hashes.txt),
+# converted C -> E1. Authoritative for the DOL; the RELs are not covered by it.
+sys.path.insert(0, str(Path(__file__).parent))
+import nsmbw_versions as ver  # noqa: E402
+dol_funcs = {}
+for row in (ROOT / "maps" / "nsmbw_hashes.txt").read_text().splitlines():
+    cols = [c.strip() for c in row.split("|")]
+    if cols[1] == "FUNCTION":
+        e1 = ver.convert("C", "E1", int(cols[0], 16))
+        if e1 is not None:
+            dol_funcs[e1] = int(cols[4].split()[1], 16)
+dol_sorted = sorted(dol_funcs)
+
+
+def inside_known_dol_body(a):
+    from bisect import bisect_right
+    i = bisect_right(dol_sorted, a) - 1
+    return i >= 0 and dol_sorted[i] < a < dol_sorted[i] + dol_funcs[dol_sorted[i]]
 
 # ---------------------------------------------------------------- function starts
 starts = {0x80004050}
 sources = {"entry": 1}
 
 
+HEURISTIC = {"data pointer", "lis/addi pointer", "lis/ori pointer", "named symbol"}
+
+
 def add(a, why):
-    if in_exec(a) and word(a) != 0:
-        if a not in starts:
-            sources[why] = sources.get(why, 0) + 1
-        starts.add(a)
+    if not in_exec(a) or word(a) == 0:
+        return
+    # In main.dol the symbol table gives exact bodies: a heuristic hit inside one is a switch label
+    # or similar, not a function. Direct-call targets are kept regardless (save/restore thunk entries
+    # and E1-only functions), as are the CodeWarrior thunk names.
+    if why in HEURISTIC and a < 0x80700000 and inside_known_dol_body(a) and not THUNK_RENAMED.match(names.get(a, "")):
+        sources["dropped inside DOL body"] = sources.get("dropped inside DOL body", 0) + 1
+        return
+    if a not in starts:
+        sources[why] = sources.get(why, 0) + 1
+    starts.add(a)
 
 
 for s, _e in exec_ranges:
     add(s, "section start")
+for a in dol_funcs:
+    add(a, "DOL symbol table")
 for t in (GAME / "seeds_bl.txt").read_text().split():
     add(int(t, 16), "bl target")
 for line in (GAME / "data_ptrs.txt").read_text().splitlines():
