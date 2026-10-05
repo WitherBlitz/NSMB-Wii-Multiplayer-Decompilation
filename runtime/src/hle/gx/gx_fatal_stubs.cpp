@@ -27,7 +27,8 @@ namespace {
 // deliberately still spelled out per entry so the translator's runtime-native
 // index sees the literal PPC_NATIVE_OVERRIDE_VOID invocation. Hiding it inside
 // this macro would leave the index unable to associate an address with the stub.
-#define
+#define GX_FATAL_STUB(addr, sym) \
+    extern "C" void gx_stub_##addr(CpuContext* ctx) { (void)ctx; HaltGX(0x##addr, sym); }
 
 GX_FATAL_STUB(801c19f0, "__GXDefaultTexRegionCallback_801c19f0") PPC_NATIVE_OVERRIDE_VOID(801c19f0, gx_stub_801c19f0, (CpuContext* ctx), (ctx));
 GX_FATAL_STUB(801c1ae0, "__GXDefaultTlutRegionCallback_801c1ae0") PPC_NATIVE_OVERRIDE_VOID(801c1ae0, gx_stub_801c1ae0, (CpuContext* ctx), (ctx));

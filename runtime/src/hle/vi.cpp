@@ -262,12 +262,61 @@ static std::atomic<bool> s_inAdvanceRetrace{false};
 // end the freshly pre-warmed empty frame and show it as a black frame group.
 static std::atomic<bool> s_presentSequenceActive{false};
 
+// NSMBW: report where the game's own loader places its four boot RELs. The translated build was
+// pre-linked for fixed heap addresses (projects/nsmbw/tools/prelink_rels.py); a mismatch means the
+// guest heap layout differs from hardware and translated REL code would run against wrong data.
+// Walks __OSModuleInfoList (0x800030C8) once per retrace until all four have been reported.
+void LogGuestModulesOnce() {
+    struct ExpectedModule { uint32_t id; const char* name; uint32_t image; uint32_t bss; };
+    static constexpr ExpectedModule kExpected[] = {
+        {1, "d_profileNP", 0x807684C0u, 0x8076D460u},
+        {2, "d_basesNP", 0x8076D680u, 0x80990820u},
+        {3, "d_enemiesNP", 0x809A2CC0u, 0x80B11440u},
+        {4, "d_en_bossNP", 0x80B1C940u, 0x80B89AC0u},
+    };
+    static uint32_t s_reported = 0;  // one bit per module id
+    if (s_reported == 0x1Eu) {
+        return;
+    }
+    uint32_t module = 0;
+    if (!Memory::TryRead32(0x800030C8u, module)) {
+        return;
+    }
+    for (int guard = 0; module != 0 && guard < 16; ++guard) {
+        uint32_t id = 0, next = 0, sectionInfo = 0, sectionBytes = 0, bss = 0;
+        if (!Memory::TryRead32(module + 0x00u, id) || !Memory::TryRead32(module + 0x04u, next) ||
+            !Memory::TryRead32(module + 0x10u, sectionInfo) || !Memory::TryRead32(module + 0x30u, sectionBytes)) {
+            return;
+        }
+        const uint32_t bssSection = sectionBytes & 0xFFu;  // OSModuleHeader.bssSection (+0x33)
+        if (bssSection != 0) {
+            Memory::TryRead32(sectionInfo + bssSection * 8u, bss);  // absolute after OSLink
+        }
+        if (id < 32 && (s_reported & (1u << id)) == 0) {
+            s_reported |= 1u << id;
+            const ExpectedModule* expected = nullptr;
+            for (const auto& candidate : kExpected) {
+                if (candidate.id == id) {
+                    expected = &candidate;
+                }
+            }
+            const bool match = expected != nullptr && expected->image == module &&
+                               (bss == 0 || (bss & ~1u) == expected->bss);
+            RT_LOGF(RT_TAG_OS, "REL module %u (%s) linked at image 0x%08X bss 0x%08X: %s\n", id,
+                    expected ? expected->name : "unexpected", module, bss,
+                    match ? "MATCH" : "MISMATCH vs the pre-linked layout");
+        }
+        module = next;
+    }
+}
+
 void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool serviceAurora) {
     // Prevent re-entry - this can happen if OSWakeupThread triggers SelectThread
     // which goes idle and calls ProcessTimerEvents again
     if (s_inAdvanceRetrace.exchange(true)) {
         return;
     }
+    LogGuestModulesOnce();
     
     uint32_t preCb = 0;
     uint32_t postCb = 0;

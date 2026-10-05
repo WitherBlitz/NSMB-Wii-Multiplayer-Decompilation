@@ -187,7 +187,9 @@ PPC_NATIVE_OVERRIDE_VOID(801c4780, GX__SetArray_8016e32c, (uint32_t a, uint32_t 
 // Switch-artifact entry point for the same SDK function; forwards rather than
 // repeating the body.
 extern "C" void GX__SetArray_8016e1c4(uint32_t a, uint32_t b, uint32_t s) { GX__SetArray_8016e32c(a, b, s); }
+#if 0  // NSMBW: MKW switch-artifact alias of GXSetArray (0x8016e1c4); NSMBW's map has no such split
 PPC_NATIVE_OVERRIDE_VOID(801c4780, GX__SetArray_8016e1c4, (uint32_t a, uint32_t b, uint32_t s), (a, b, s));
+#endif
 
 // ============================================================================
 // Texture Coordinate Generation

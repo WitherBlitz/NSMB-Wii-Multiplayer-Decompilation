@@ -1,5 +1,5 @@
-// NAND/ISFS HLE: redirects Wii NAND paths (e.g. /title/00010004/524d4350/data/rksys.dat) to
-// <nand_root>\title\00010004\524d4350\data\rksys.dat on the host.
+// NAND/ISFS HLE: redirects Wii NAND paths (for NSMBW, /title/00010000/534d4e45/data/...) to
+// <nand_root>\title\00010000\534d4e45\data\... on the host.
 
 #include "nand_internal.h"
 

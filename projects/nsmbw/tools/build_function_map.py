@@ -106,19 +106,48 @@ for m in re.finditer(r"(\S+)\s*=\s*0x([0-9A-Fa-f]{8})\s*;", (ROOT / "maps" / "ka
 sys.path.insert(0, str(Path(__file__).parent))
 import nsmbw_versions as ver  # noqa: E402
 dol_funcs = {}
+dol_objects = {}  # every symbol-table object (functions and data) in main.dol: start -> length
 for row in (ROOT / "maps" / "nsmbw_hashes.txt").read_text().splitlines():
     cols = [c.strip() for c in row.split("|")]
+    e1 = ver.convert("C", "E1", int(cols[0], 16))
+    if e1 is None:
+        continue
+    length = int(cols[4].split()[1], 16)
+    dol_objects[e1] = max(length, 1)
     if cols[1] == "FUNCTION":
-        e1 = ver.convert("C", "E1", int(cols[0], 16))
-        if e1 is not None:
-            dol_funcs[e1] = int(cols[4].split()[1], 16)
+        dol_funcs[e1] = length
 dol_sorted = sorted(dol_funcs)
+obj_sorted = sorted(dol_objects)
 
 
 def inside_known_dol_body(a):
     from bisect import bisect_right
     i = bisect_right(dol_sorted, a) - 1
     return i >= 0 and dol_sorted[i] < a < dol_sorted[i] + dol_funcs[dol_sorted[i]]
+
+
+def covered_by_dol_object(a):
+    """Inside any symbol-table object: a function body (other than its start) or a data object."""
+    from bisect import bisect_right
+    i = bisect_right(obj_sorted, a) - 1
+    if i < 0:
+        return False
+    start = obj_sorted[i]
+    if a >= start + dol_objects[start]:
+        return False
+    return not (a == start and start in dol_funcs)
+
+
+TERMINATOR_WORDS = {0x4E800020, 0x4C000064, 0x4E800420}  # blr, rfi, bctr
+
+
+def plausible_gap_start(a):
+    """A heuristic start in a gap no symbol covers (E1-only code): must follow a terminator and
+    must not be text (strings such as MetroTRK's messages sit right after functions in .init)."""
+    prev, cur = word(a - 4), word(a)
+    after_terminator = prev in TERMINATOR_WORDS or ((prev >> 26) == 18 and (prev & 1) == 0)
+    looks_ascii = all(0x20 <= b <= 0x7E for b in cur.to_bytes(4, "big"))
+    return after_terminator and not looks_ascii
 
 # ---------------------------------------------------------------- function starts
 starts = {0x80004050}
@@ -134,9 +163,15 @@ def add(a, why):
     # In main.dol the symbol table gives exact bodies: a heuristic hit inside one is a switch label
     # or similar, not a function. Direct-call targets are kept regardless (save/restore thunk entries
     # and E1-only functions), as are the CodeWarrior thunk names.
-    if why in HEURISTIC and a < 0x80700000 and inside_known_dol_body(a) and not THUNK_RENAMED.match(names.get(a, "")):
-        sources["dropped inside DOL body"] = sources.get("dropped inside DOL body", 0) + 1
-        return
+    if why in HEURISTIC and a < 0x80700000 and a not in dol_funcs and not THUNK_RENAMED.match(names.get(a, "")):
+        # Data tables (_rom_copy_info, _bss_init_info) and strings live inside .init/.text, so a
+        # pointer to them is not a function start.
+        if covered_by_dol_object(a):
+            sources["dropped inside DOL object"] = sources.get("dropped inside DOL object", 0) + 1
+            return
+        if not plausible_gap_start(a):
+            sources["dropped implausible DOL gap"] = sources.get("dropped implausible DOL gap", 0) + 1
+            return
     if a not in starts:
         sources[why] = sources.get(why, 0) + 1
     starts.add(a)

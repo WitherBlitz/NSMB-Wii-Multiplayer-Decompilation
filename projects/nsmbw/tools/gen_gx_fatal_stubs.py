@@ -107,7 +107,9 @@ for a in lib:
         continue
     stubs.append((a, n or f"GX_unnamed_{a:08X}"))
 
-header = git_show.split("GX_FATAL_STUB(", 1)[0].rstrip() + "\n"
+# Keep everything before the first stub *invocation* (a line that starts with GX_FATAL_STUB(): the
+# macro's own #define line also contains "GX_FATAL_STUB(" and must stay in the header.
+header = re.split(r"(?m)^GX_FATAL_STUB\(", git_show, maxsplit=1)[0].rstrip() + "\n"
 header = header.replace("// Auto-generated GX fatal stubs",
                         "// Auto-generated GX fatal stubs for NSMBW SMNE01 rev 1 (tools/gen_gx_fatal_stubs.py)")
 body = "".join(

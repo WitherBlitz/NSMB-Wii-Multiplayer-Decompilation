@@ -9,9 +9,6 @@
 80004364 memcpy
 80004600 __fill_mem
 800046b4 memset
-800046e4 0x800046e4
-80006618 _rom_copy_info
-8000669c _bss_init_info
 80006780 DVDDiskCheck
 80006790 init__3d2dFv
 800067a0 draw__3d2dFv
@@ -5922,7 +5919,6 @@
 800dcb60 finalizeState_None__Q313dRemoconMng_c10dConnect_c12dExtension_cFv
 800dcb70 executeState_None__Q313dRemoconMng_c10dConnect_c12dExtension_cFv
 800dcc80 initializeState_Freestyle__Q313dRemoconMng_c10dConnect_c12dExtension_cFv
-800dcc90 0x800dcc90
 800dcca0 executeState_Freestyle__Q313dRemoconMng_c10dConnect_c12dExtension_cFv
 800dcdb0 initializeState_Other__Q313dRemoconMng_c10dConnect_c12dExtension_cFv
 800dcdc0 finalizeState_Other__Q313dRemoconMng_c10dConnect_c12dExtension_cFv
@@ -8822,7 +8818,6 @@
 8015bcf0 myCreate_setPainterCallbackProc__FPv
 8015bd10 BootSound__FPv
 8015bd40 myReadArc_BootSound__FPv
-8015bd80 0x8015bd80
 8015bdd0 myReadArc_resSndWait__FPv
 8015be20 myReadArc_PhaseHbm_0__FPv
 8015be60 myReadArc_SaveBanner__FPv
@@ -15209,9 +15204,7 @@
 802bb0f0 setColor__Q23EGG10ColorFaderFQ34nw4r2ut5Color
 802bb110 setStatus__Q23EGG10ColorFaderFQ33EGG5Fader7EStatus
 802bb150 fadeIn__Q23EGG10ColorFaderFv
-802bb180 0x802bb180
 802bb1b0 calc__Q23EGG10ColorFaderFv
-802bb2a0 0x802bb2a0
 802bb540 __dt__Q23EGG10ColorFaderFv
 802bb580 __ct__Q23EGG12AsyncDisplayFUc
 802bb600 calcS__Q23EGG12AsyncDisplayFv

@@ -11,8 +11,8 @@
 #include <cstdlib>
 #include <cctype>
 
-static constexpr uint32_t MKW_TITLE_ID_HI = 0x00010004;
-static constexpr uint32_t MKW_TITLE_ID_LO = 0x524D4350; // "RMCP" fallback
+static constexpr uint32_t MKW_TITLE_ID_HI = 0x00010000;  // NSMBW disc title 00010000-534D4E45 (tmd.bin); name kept
+static constexpr uint32_t MKW_TITLE_ID_LO = 0x534D4E45; // "SMNE" fallback
 
 static bool IsValidEspTitleCode(uint32_t code) {
     for (int shift = 24; shift >= 0; shift -= 8) {

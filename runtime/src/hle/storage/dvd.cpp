@@ -44,7 +44,7 @@ static fs::path g_dvdRoot;
 static std::once_flag g_dvdRootOnce;
 
 static uint32_t CurrentDiscGameCode() {
-    return RuntimeHle::CurrentGameCode(0x524D4350u); // RMCP
+    return RuntimeHle::CurrentGameCode(0x534D4E45u); // SMNE (NSMBW) fallback
 }
 
 // ============================================================================
