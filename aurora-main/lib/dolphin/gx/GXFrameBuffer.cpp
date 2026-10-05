@@ -421,7 +421,9 @@ void GXCopyDisp(void* dest, GXBool clear) {
   if (aurora::gx::fifo::get_buffer_size() != 0) {
     aurora::gx::fifo::drain();
   }
-  const auto rect = aurora::gx::map_logical_scissor(g_gxState.dispCopySrc);
+  // Round the edges to the nearest render row, as texture copies do. Rounding outward like a scissor
+  // pulls the row below the picture into its last line at fractional render scales.
+  const auto rect = map_texture_copy_source(g_gxState.dispCopySrc, false).clearRect;
   const auto logicalDstWidth =
       std::max<u32>(g_gxState.dispCopyDstWidth != 0 ? g_gxState.dispCopyDstWidth : static_cast<u32>(g_gxState.dispCopySrc.width), 1);
   const auto logicalDstHeight =

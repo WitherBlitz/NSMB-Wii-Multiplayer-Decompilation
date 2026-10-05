@@ -34,6 +34,9 @@ extern "C" void Android_UnlockActivityMutex(void);
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "dolphin/vi/vi_internal.hpp"
@@ -45,6 +48,8 @@ Module Log("aurora::window");
 SDL_Window* g_window;
 SDL_Renderer* g_renderer;
 float g_frameBufferScale = 0.f;
+// Render height in lines (VISetFrameBufferLines); 0 leaves the size to g_frameBufferScale.
+float g_frameBufferLines = 0.f;
 bool g_frameBufferAspectFit = true;
 std::atomic_bool g_forceAspect169{false};
 bool g_presentSurfaceFill = false;
@@ -526,11 +531,27 @@ AuroraWindowSize get_window_size() {
   int fb_w = native_fb_w;
   int fb_h = native_fb_h;
   const auto [baseW, baseH] = vi::configured_fb_size();
+  // A line target (VISetFrameBufferLines) sizes the picture the game shows: its visible EFB lines
+  // become exactly that many rows (the EFB workspace below them scales along), and with 16:9 or
+  // the surface's aspect the width is the line count times that aspect, so the pixels are square.
+  const uint32_t visibleH = vi::visible_fb_size().y;
+  const bool lineTarget = g_frameBufferLines > 0.f && baseH > 0 && visibleH > 0;
+  const float frameBufferScale =
+      lineTarget ? g_frameBufferLines / static_cast<float>(visibleH) : g_frameBufferScale;
+  const auto lineTargetSize = [&](float aspect) {
+    return std::pair{
+        std::max(1, static_cast<int>(std::lround(g_frameBufferLines *
+                                                 render_size_limits::clamp_dynamic_aspect(aspect)))),
+        std::max(1, static_cast<int>(std::lround(static_cast<float>(baseH) * frameBufferScale))),
+    };
+  };
   if (g_forceAspect169.load(std::memory_order_acquire) && native_fb_w > 0 && native_fb_h > 0) {
-    if (g_frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
+    if (lineTarget) {
+      std::tie(fb_w, fb_h) = lineTargetSize(16.f / 9.f);
+    } else if (frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
       const auto [scaledW, scaledH] =
           scale_frame_buffer_to_aspect(static_cast<int>(baseW), static_cast<int>(baseH),
-                                       g_frameBufferScale, 16.f / 9.f);
+                                       frameBufferScale, 16.f / 9.f);
       fb_w = scaledW;
       fb_h = scaledH;
     } else {
@@ -540,8 +561,8 @@ AuroraWindowSize get_window_size() {
                       std::max(1, static_cast<int>(std::lround(native_fb_w * (9.f / 16.f)))));
     }
   } else if (g_frameBufferAspectFit && baseW > 0 && baseH > 0) {
-    float renderScale = g_frameBufferScale > 0.f ? g_frameBufferScale : 1.f;
-    if (g_frameBufferScale <= 0.f) {
+    float renderScale = frameBufferScale > 0.f ? frameBufferScale : 1.f;
+    if (frameBufferScale <= 0.f) {
       renderScale = std::min(static_cast<float>(native_fb_w) / static_cast<float>(baseW),
                              static_cast<float>(native_fb_h) / static_cast<float>(baseH));
       if (renderScale < 1.f) {
@@ -550,9 +571,12 @@ AuroraWindowSize get_window_size() {
     }
     fb_w = std::max(1, static_cast<int>(std::lround(static_cast<float>(baseW) * renderScale)));
     fb_h = std::max(1, static_cast<int>(std::lround(static_cast<float>(baseH) * renderScale)));
-  } else if (g_frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
+  } else if (lineTarget && native_fb_w > 0 && native_fb_h > 0) {
+    std::tie(fb_w, fb_h) =
+        lineTargetSize(static_cast<float>(native_fb_w) / static_cast<float>(native_fb_h));
+  } else if (frameBufferScale > 0.f && baseW > 0 && baseH > 0) {
     const auto [scaledW, scaledH] =
-        scale_frame_buffer_to_aspect(static_cast<int>(baseW), static_cast<int>(baseH), g_frameBufferScale,
+        scale_frame_buffer_to_aspect(static_cast<int>(baseW), static_cast<int>(baseH), frameBufferScale,
                                      static_cast<float>(fb_w) / static_cast<float>(fb_h));
     fb_w = scaledW;
     fb_h = scaledH;
@@ -763,6 +787,19 @@ void set_frame_buffer_scale(float scale) {
   g_frameBufferScale = scale;
   request_frame_buffer_resize();
 }
+
+void set_frame_buffer_lines(float lines) {
+  if (!std::isfinite(lines) || lines < 0.f) {
+    lines = 0.f;
+  }
+  if (g_frameBufferLines == lines) {
+    return;
+  }
+  g_frameBufferLines = lines;
+  request_frame_buffer_resize();
+}
+
+bool frame_buffer_line_target() noexcept { return g_frameBufferLines > 0.f; }
 
 void set_frame_buffer_aspect_fit(bool fit) {
   if (g_frameBufferAspectFit == fit) {

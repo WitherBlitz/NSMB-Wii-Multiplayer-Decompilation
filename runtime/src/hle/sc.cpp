@@ -50,10 +50,11 @@ extern "C" uint32_t SCCheckStatus_HLE()
 PPC_NATIVE_OVERRIDE(801DB8E0, SCCheckStatus_HLE, uint32_t, (), ());
 
 // 0x801DD1D0 -> SCGetAspectRatio()
-// Returns: 0 = 4:3, 1 = 16:9
+// Returns: 0 = 4:3, 1 = 16:9. The display settings' aspect at boot: 16:9 and Fill both run the
+// game in widescreen (Fill then widens its canvas further).
 extern "C" uint32_t SCGetAspectRatio_HLE()
 {
-    return (RuntimeConfigFile::WidescreenEnabled(true) || MkwForceAspect169Requested()) ? 1u : 0u;
+    return DisplaySettings::GameWidescreen() ? 1u : 0u;
 }
 
 PPC_NATIVE_OVERRIDE(801DD1D0, SCGetAspectRatio_HLE, uint32_t, (), ());

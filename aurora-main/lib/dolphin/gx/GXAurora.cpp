@@ -7,6 +7,7 @@
 #include "__gx.h"
 #include "gx.hpp"
 #include "../../window.hpp"
+#include "../vi/vi_internal.hpp"
 
 #include "../../gfx/common.hpp"
 #include "../../gx/fifo.hpp"
@@ -63,6 +64,21 @@ void AuroraGetRenderSize(u32* width, u32* height) {
   }
   if (height != nullptr) {
     *height = renderSize.y;
+  }
+}
+
+void AuroraGetPictureSize(u32* width, u32* height) {
+  const auto renderSize = aurora::gfx::get_frame_buffer_size();
+  const auto [baseWidth, baseHeight] = aurora::vi::configured_fb_size();
+  const auto [visibleWidth, visibleHeight] = aurora::vi::visible_fb_size();
+  const auto scaled = [](u32 size, u32 part, u32 whole) {
+    return whole == 0 ? size : static_cast<u32>(std::lround(static_cast<double>(size) * part / whole));
+  };
+  if (width != nullptr) {
+    *width = scaled(renderSize.x, std::min(visibleWidth, baseWidth), baseWidth);
+  }
+  if (height != nullptr) {
+    *height = scaled(renderSize.y, std::min(visibleHeight, baseHeight), baseHeight);
   }
 }
 

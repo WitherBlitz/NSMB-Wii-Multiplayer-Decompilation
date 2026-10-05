@@ -14,4 +14,6 @@ void NotifyStrapInputAccepted() noexcept;
 void AdvancePresentedFrame() noexcept;
 // Put host controllers back to a neutral state before the process ends.
 void ReleaseControllers() noexcept;
+// FPS counter on or off (the Android menu sets it through JNI); saved to Config.toml.
+void SetShowFps(bool show) noexcept;
 } // namespace settings_overlay

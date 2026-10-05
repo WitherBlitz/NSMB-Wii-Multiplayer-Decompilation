@@ -935,7 +935,9 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
   uint32_t render_width = width;
   uint32_t render_height = height;
   const auto [efbWidth, efbHeight] = vi::configured_fb_size();
-  if (efbWidth != 0 && efbHeight != 0) {
+  // A line target sizes the render target exactly, including below 1x; otherwise the EFB
+  // workspace is the floor.
+  if (efbWidth != 0 && efbHeight != 0 && !window::frame_buffer_line_target()) {
     render_width = std::max(render_width, efbWidth);
     render_height = std::max(render_height, efbHeight);
   }
@@ -963,6 +965,8 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
     gx::clear_display_copy_cache();
     gfx::clear_caches();
     clear_present_source_override();
+    Log.info("Render target {}x{} for a {}x{} surface", render_width, render_height, native_width,
+             native_height);
   }
   g_graphicsConfig.surfaceConfiguration.width = native_width;
   g_graphicsConfig.surfaceConfiguration.height = native_height;

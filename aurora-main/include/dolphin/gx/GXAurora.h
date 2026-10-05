@@ -102,6 +102,9 @@ void AuroraSetViewportPolicy(AuroraViewportPolicy policy);
  */
 void AuroraGetRenderSize(u32* width, u32* height);
 
+/** The game's visible picture within the content framebuffer: its visible EFB lines, scaled. */
+void AuroraGetPictureSize(u32* width, u32* height);
+
 /** Retrieves the current native presentation-surface size, ignoring the GX sizing policy. */
 void AuroraGetSurfaceSize(u32* width, u32* height);
 

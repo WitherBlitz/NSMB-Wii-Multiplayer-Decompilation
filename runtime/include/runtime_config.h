@@ -34,6 +34,7 @@
 struct RuntimeUserConfig {
     std::optional<bool> widescreen;
     std::optional<bool> forceAspect169;
+    std::optional<int32_t> aspectMode;  // 0 original 4:3, 1 16:9, 2 fill the window (DisplaySettings)
     std::optional<int32_t> windowPosX;
     std::optional<int32_t> windowPosY;
     std::optional<uint32_t> windowWidth;
@@ -161,7 +162,7 @@ inline std::string RemoveComment(std::string_view line) {
 }
 
 inline bool IsSupportedResolutionMultiplier(float value) {
-    static constexpr std::array values{0.0f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f};
+    static constexpr std::array values{0.0f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f};
     return std::find(values.begin(), values.end(), value) != values.end();
 }
 
@@ -430,6 +431,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
 
     config.widescreen = FindConfigValue<bool>(document, "video", "widescreen");
     config.forceAspect169 = FindConfigValue<bool>(document, "video", "force_16_9");
+    if (auto value = FindConfigInt(document, "video", "aspect_mode"); value && *value >= 0 && *value <= 2) {
+        config.aspectMode = *value;
+    }
     config.windowPosX = FindConfigInt(document, "video", "window_x");
     config.windowPosY = FindConfigInt(document, "video", "window_y");
     if (auto value = FindConfigUint(document, "video", "window_width"); value && *value != 0) {
@@ -795,6 +799,16 @@ inline bool WidescreenEnabled(bool fallback = false) {
 
 inline bool ForceAspect169Enabled(bool fallback = false) {
     return Get().forceAspect169.value_or(fallback);
+}
+
+// Display aspect (DisplaySettings): 0 original 4:3, 1 16:9, 2 fill the window or screen.
+inline int32_t AspectMode(int32_t fallback) {
+    return Get().aspectMode.value_or(fallback);
+}
+
+inline bool SetAspectMode(int32_t value) {
+    Mutable().aspectMode = value;
+    return WriteSetting("video", "aspect_mode", std::to_string(value));
 }
 
 inline bool SetForceAspect169(bool value) {

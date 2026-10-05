@@ -46,6 +46,14 @@ void VICenterWindow();
 void VISetFrameBufferScale(float scale);
 
 /**
+ * Renders the game's visible picture (its EFB lines) at this many lines, below 1x included. The EFB
+ * workspace beneath the picture scales along; with the 16:9 and stretch policies the width is lines
+ * times that aspect, so the picture's pixels are square. Overrides VISetFrameBufferScale while
+ * non-zero; 0.0f turns it off.
+ */
+void VISetFrameBufferLines(float lines);
+
+/**
  * \brief Lock the GX framebuffer to a specific aspect ratio, without changing the native framebuffer.
  *
  * @param width Width part of the aspect ratio fraction.

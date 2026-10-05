@@ -2,6 +2,7 @@
 
 #include "settings_overlay.h"
 #include "runtime_config.h"
+#include "display_settings.h"
 
 #include <aurora/aurora.h>
 #include <aurora/event.h>
@@ -123,12 +124,13 @@ inline void ApplyPendingMkwDynamicAspectSurface() {
     // The OS can adjust a window without a resize event reaching the queue
     // (observed with hidden windows clamped to the work area), so re-read the
     // surface at every frame boundary instead of only on queued events.
-    // UpdateMkwDynamicAspectSurface is idempotent and cheap for a stable size.
+    // NSMBW: DisplaySettings owns the aspect (the viewport policy and the game's
+    // widened canvas for Fill); it is idempotent and cheap for a stable size.
     (void)g_mkwDynamicAspectSurfacePending.exchange(false, std::memory_order_acq_rel);
     uint32_t surfaceWidth = 0;
     uint32_t surfaceHeight = 0;
     AuroraGetSurfaceSize(&surfaceWidth, &surfaceHeight);
-    UpdateMkwDynamicAspectSurface(surfaceWidth, surfaceHeight);
+    DisplaySettings::OnFrameBoundary(surfaceWidth, surfaceHeight);
 }
 
 inline bool BeginAuroraFrame() {

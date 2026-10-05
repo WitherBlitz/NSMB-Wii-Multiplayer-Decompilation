@@ -55,6 +55,9 @@ void center_window();
 void sync_frame_buffer_size() noexcept;
 void request_frame_buffer_resize();
 void set_frame_buffer_scale(float scale);
+void set_frame_buffer_lines(float lines);
+// A line target is set: the render target may be smaller than the EFB workspace (below 1x).
+bool frame_buffer_line_target() noexcept;
 void set_frame_buffer_aspect_fit(bool fit);
 void set_force_aspect_16_9(bool force);
 void set_present_surface_fill(bool fill);

@@ -7,6 +7,7 @@
 #include "game_graphics_options.h"
 #include "music_attenuation.h"
 #include "runtime_config.h"
+#include "display_settings.h"
 #include "runtime_log.h"
 #include "wii_remote_input.h"
 
@@ -110,7 +111,6 @@ int g_displayMode = [] {
 bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
 bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
 bool g_showFps = RuntimeConfigFile::ShowFps(true);
-bool g_forceAspect169 = RuntimeConfigFile::ForceAspect169Enabled();
 #if defined(__APPLE__)
 bool g_metalFxSpatialUpscaling = RuntimeConfigFile::MetalFxSpatialUpscaling(false);
 #endif
@@ -172,9 +172,21 @@ Clock::time_point g_bootShaderWaitStart{};
 constexpr uint32_t kBootShaderNoticeThreshold = 100;
 constexpr auto kBootShaderWaitLimit = std::chrono::minutes(3);
 
-constexpr std::array<ResolutionItem, 8> kResolutions = {{
-    {"Auto (window size)", 0.0f}, {"Native (1x)", 1.0f}, {"1.5x", 1.5f}, {"2x", 2.0f},
-    {"3x", 3.0f}, {"4x", 4.0f}, {"6x", 6.0f}, {"8x", 8.0f},
+// Render heights: 1x is 480 lines in every aspect (DisplaySettings), the width follows the aspect.
+constexpr std::array<ResolutionItem, 10> kResolutions = {{
+    {"Auto (window size)", 0.0f}, {"0.5x (240p)", 0.5f}, {"0.75x (360p)", 0.75f}, {"1x (480p)", 1.0f},
+    {"1.5x (720p)", 1.5f}, {"2x (960p)", 2.0f}, {"3x (1440p)", 3.0f}, {"4x (1920p)", 4.0f},
+    {"6x (2880p)", 6.0f}, {"8x (3840p)", 8.0f},
+}};
+
+struct AspectItem {
+    const char* label;
+    int32_t mode;
+};
+constexpr std::array<AspectItem, 3> kAspects = {{
+    {"Original 4:3", DisplaySettings::kAspect4x3},
+    {"16:9", DisplaySettings::kAspect16x9},
+    {"Fill Window", DisplaySettings::kAspectFill},
 }};
 
 constexpr std::array<uint32_t, 3> kFrameInterpolationTargetFps{0, 120, 180};
@@ -189,8 +201,17 @@ bool IsHighFrameRateMode() {
 
 void SetResolutionScale(float scale) {
     g_resolutionScale = scale;
-    VISetFrameBufferScale(scale);
+    DisplaySettings::Settings settings = DisplaySettings::Current();
+    settings.renderScale = scale;
+    DisplaySettings::Request(settings);
     RuntimeConfigFile::SetResolutionMultiplier(scale);
+}
+
+void SetAspectMode(int32_t mode) {
+    DisplaySettings::Settings settings = DisplaySettings::Current();
+    settings.aspect = mode;
+    DisplaySettings::Request(settings);
+    RuntimeConfigFile::SetAspectMode(mode);
 }
 
 void LimitResolutionForFrameRate() {
@@ -1027,12 +1048,7 @@ void DrawAudioSettings() {
 
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
-    if (ImGui::Checkbox("Force 16:9", &g_forceAspect169)) {
-        SetMkwForceAspect169(g_forceAspect169);
-        RuntimeConfigFile::SetForceAspect169(g_forceAspect169);
-    }
-    ImGui::TextDisabled("Keep a 16:9 image with black bars when the window has another shape.");
-    ImGui::Separator();
+    // NSMBW: the aspect (original 4:3, 16:9, fill) lives in the Aspect menu (DisplaySettings).
     struct EffectFlag {
         const char* label;
         uint32_t flag;
@@ -1330,6 +1346,31 @@ void DrawTopBar() {
                 SetResolutionScale(resolution.scale);
             }
         }
+        uint32_t pictureWidth = 0;
+        uint32_t pictureHeight = 0;
+        AuroraGetPictureSize(&pictureWidth, &pictureHeight);
+        ImGui::Separator();
+        ImGui::TextDisabled("Rendering %ux%u", pictureWidth, pictureHeight);
+        ImGui::EndMenu();
+    }
+
+    const DisplaySettings::Settings display = DisplaySettings::Current();
+    const auto aspectIt = std::find_if(kAspects.begin(), kAspects.end(), [&](const AspectItem& item) {
+        return item.mode == display.aspect;
+    });
+    const std::string aspectMenuLabel =
+        std::string("Aspect: ") + (aspectIt != kAspects.end() ? aspectIt->label : "Custom");
+    if (ImGui::BeginMenu(aspectMenuLabel.c_str())) {
+        for (const auto& aspect : kAspects) {
+            if (ImGui::MenuItem(aspect.label, nullptr, aspect.mode == display.aspect)) {
+                SetAspectMode(aspect.mode);
+            }
+        }
+        // The game reads 4:3 versus widescreen once, at boot.
+        if ((display.aspect != DisplaySettings::kAspect4x3) != DisplaySettings::GameWidescreen()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Switching between 4:3 and widescreen takes effect after a restart.");
+        }
         ImGui::EndMenu();
     }
 
@@ -1501,6 +1542,11 @@ void HandleEvents(const AuroraEvent* events) noexcept {
             g_lastMouseActivity = Clock::now();
         }
     }
+}
+
+void SetShowFps(bool show) noexcept {
+    g_showFps = show;
+    RuntimeConfigFile::SetShowFps(show);
 }
 
 void ReleaseControllers() noexcept {
