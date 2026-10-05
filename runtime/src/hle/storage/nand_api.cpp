@@ -81,6 +81,30 @@ static bool RenameNoReplace(const std::filesystem::path& from,
 #endif
 }
 
+// Moves `from` to `to` only while `to` does not exist. Uses an atomic no-replace primitive where
+// the filesystem has one (link(2) for files, renameat2 RENAME_NOREPLACE); filesystems with
+// neither, such as Android's shared storage (no hard links, no rename flags), get a
+// check-then-rename, which only a second writer racing for the same name could defeat.
+static bool PublishNoReplace(const std::filesystem::path& from, const std::filesystem::path& to,
+                             bool isDirectory, std::error_code& error) {
+    if (!isDirectory) {
+        std::filesystem::create_hard_link(from, to, error);
+        if (!error || error == std::errc::file_exists) {
+            return !error;
+        }
+    }
+    if (RenameNoReplace(from, to, error) || error == std::errc::file_exists) {
+        return !error;
+    }
+    std::error_code existsEc;
+    if (std::filesystem::exists(to, existsEc) || existsEc) {
+        error = existsEc ? existsEc : std::make_error_code(std::errc::file_exists);
+        return false;
+    }
+    std::filesystem::rename(from, to, error);
+    return !error;
+}
+
 extern "C" int32_t NANDInit_HLE(void) {
     // Initialize ISFS
     ISFS_OpenLib_Initialize(&GetPersistentCpuContext());
@@ -498,15 +522,10 @@ extern "C" int32_t NANDMove_HLE(uint32_t srcPathPtr, uint32_t dstPathPtr) {
             return NAND_RESULT_UNKNOWN;
         }
 
+        // Both paths are already on the target filesystem, so this is a no-replace publication
+        // (rename(2) on POSIX would replace an existing destination).
         std::error_code publishEc;
-        if (sourceIsDirectory) {
-            RenameNoReplace(tempHost, dstHost, publishEc);
-        } else {
-            // link(2) and CreateHardLink do not replace an existing destination,
-            // unlike rename(2) on POSIX. Both paths are already on the target
-            // filesystem, so the link is a no-replace publication operation.
-            std::filesystem::create_hard_link(tempHost, dstHost, publishEc);
-        }
+        PublishNoReplace(tempHost, dstHost, sourceIsDirectory, publishEc);
         if (publishEc) {
             LogNandError("NANDMove", "failed to publish cross-mount copy: %s",
                          publishEc.message().c_str());

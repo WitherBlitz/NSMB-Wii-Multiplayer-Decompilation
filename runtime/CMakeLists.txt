@@ -137,6 +137,12 @@ if(NOT MKW_NATIVE_PREBUILT_DIR)
     target_compile_definitions(mkw_cryptopp PUBLIC ${MKW_CRYPTOPP_INTERFACE_DEFINITIONS})
     target_compile_options(mkw_cryptopp PRIVATE -w)
     set_target_properties(mkw_cryptopp PROPERTIES UNITY_BUILD OFF)
+    if(MKW_PLATFORM_ANDROID)
+        # On Android Crypto++ asks the NDK's cpufeatures helper which ARM extensions exist.
+        set(MKW_NDK_CPUFEATURES_DIR "${ANDROID_NDK}/sources/android/cpufeatures")
+        target_sources(mkw_cryptopp PRIVATE "${MKW_NDK_CPUFEATURES_DIR}/cpu-features.c")
+        target_include_directories(mkw_cryptopp PRIVATE "${MKW_NDK_CPUFEATURES_DIR}")
+    endif()
 endif()
 
 # TLS for non-Windows guest network HLE (runtime/src/hle/net/network_ssl.cpp) - the Windows path

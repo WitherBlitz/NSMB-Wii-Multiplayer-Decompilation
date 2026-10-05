@@ -428,8 +428,23 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
     // Wake up threads sleeping on the VI retrace queue (VIWaitForRetrace).
     // The retrace count has been incremented and written to guest memory.
     if (ctx) {
+        // Bring-up trace: the first wakeups show whether a VIWaitForRetrace sleeper was queued and
+        // whether waking it made the OS see a runnable thread.
+        static int s_wakeLogs = 0;
+        const bool logWake = s_wakeLogs < 6;
+        uint32_t queueHead = 0;
+        if (logWake) {
+            Memory::TryRead32(kViRetraceQueueAddr, queueHead);
+        }
         ctx->gpr[3] = kViRetraceQueueAddr;
         OSWakeupThread_HLE_801aaaa4(ctx);
+        if (logWake) {
+            ++s_wakeLogs;
+            uint32_t runQueueBits = 0;
+            Memory::TryRead32(0x8042A708u, runQueueBits);  // RunQueueBits (NSMBW)
+            RT_LOGF(RT_TAG_VI, "[retrace %u] woke retrace queue (head 0x%08X) -> RunQueueBits 0x%08X\n",
+                    retraceValue, queueHead, runQueueBits);
+        }
     }
 
     if (serviceAurora) {

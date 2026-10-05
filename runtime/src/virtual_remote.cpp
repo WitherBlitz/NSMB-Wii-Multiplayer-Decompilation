@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <mutex>
@@ -54,6 +55,14 @@ struct Motion {
     uint32_t shakePhase = 0;
     float tilt = 0.0f;
 };
+
+// Written by the Android UI thread (SetTouchState), read on the guest thread. The *SinceRead
+// latches keep a press shorter than one 60 Hz input read (a quick tap) visible for one read.
+std::atomic<uint32_t> g_touchButtons{0};
+std::atomic<uint32_t> g_touchButtonsSinceRead{0};
+std::atomic<bool> g_touchShake{false};
+std::atomic<bool> g_touchShakeSinceRead{false};
+std::atomic<float> g_touchTilt{0.0f};
 
 std::mutex g_mutex;
 std::array<PADStatus, PAD_MAX_CONTROLLERS> g_pads{};
@@ -101,6 +110,26 @@ Intent KeyboardIntent() {
     }
     intent.shake = held(SDL_SCANCODE_C) || held(SDL_SCANCODE_LCTRL) || held(SDL_SCANCODE_RCTRL);
     intent.tilt = (held(SDL_SCANCODE_E) ? 1.0f : 0.0f) - (held(SDL_SCANCODE_Q) ? 1.0f : 0.0f);
+    return intent;
+}
+
+// The on-screen remote and phone motion set through SetTouchState.
+Intent TouchIntent() {
+    Intent intent;
+    const uint32_t touch = g_touchButtons.load(std::memory_order_relaxed) |
+                           g_touchButtonsSinceRead.exchange(0, std::memory_order_relaxed);
+    if (touch & kTouchLeft) intent.buttons |= kScreenLeft;
+    if (touch & kTouchRight) intent.buttons |= kScreenRight;
+    if (touch & kTouchUp) intent.buttons |= kScreenUp;
+    if (touch & kTouchDown) intent.buttons |= kScreenDown;
+    if (touch & kTouchOne) intent.buttons |= kWpadOne;
+    if (touch & kTouchTwo) intent.buttons |= kWpadTwo;
+    if (touch & kTouchA) intent.buttons |= kWpadA;
+    if (touch & kTouchPlus) intent.buttons |= kWpadPlus;
+    if (touch & kTouchMinus) intent.buttons |= kWpadMinus;
+    intent.shake = g_touchShake.load(std::memory_order_relaxed) ||
+                   g_touchShakeSinceRead.exchange(false, std::memory_order_relaxed);
+    intent.tilt = std::clamp(g_touchTilt.load(std::memory_order_relaxed), -1.0f, 1.0f);
     return intent;
 }
 
@@ -169,6 +198,16 @@ void AnnounceLocked(uint32_t chan, bool pad) {
 
 } // namespace
 
+void SetTouchState(uint32_t touchButtons, bool shake, float tilt) {
+    g_touchButtons.store(touchButtons, std::memory_order_relaxed);
+    g_touchButtonsSinceRead.fetch_or(touchButtons, std::memory_order_relaxed);
+    g_touchShake.store(shake, std::memory_order_relaxed);
+    if (shake) {
+        g_touchShakeSinceRead.store(true, std::memory_order_relaxed);
+    }
+    g_touchTilt.store(std::isfinite(tilt) ? tilt : 0.0f, std::memory_order_relaxed);
+}
+
 bool Present(uint32_t chan) {
     if (chan >= PAD_MAX_CONTROLLERS) {
         return false;
@@ -193,13 +232,18 @@ bool Sample(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
     if (pad) {
         intent = PadIntent(g_pads[chan]);
     }
-    if (chan == 0 && !g_keyboardOnAPort) {
-        const Intent keys = KeyboardIntent();
-        intent.buttons |= keys.buttons;
-        intent.shake = intent.shake || keys.shake;
-        if (keys.tilt != 0.0f) {
-            intent.tilt = keys.tilt;
+    const auto merge = [&intent](const Intent& other) {
+        intent.buttons |= other.buttons;
+        intent.shake = intent.shake || other.shake;
+        if (other.tilt != 0.0f) {
+            intent.tilt = other.tilt;
         }
+    };
+    if (chan == 0 && !g_keyboardOnAPort) {
+        merge(KeyboardIntent());
+    }
+    if (chan == 0) {
+        merge(TouchIntent());
     }
     if (InputBindings::InputBlocked()) {
         intent = {};  // the settings overlay owns input; the remote stays connected at rest

@@ -28,4 +28,12 @@ bool Present(uint32_t chan);
 // Fills one frame of the virtual remote on `chan`; false when Present(chan) is false.
 bool Sample(uint32_t chan, WiiRemoteInput::KpadSample& sample);
 
+// On-screen remote and phone motion for player 1 (the Android app's overlay, through JNI). Buttons
+// use screen directions, like the keyboard; tilt is -1 (counter-clockwise) .. 1 (clockwise).
+enum TouchButton : uint32_t {
+    kTouchLeft = 0x001, kTouchRight = 0x002, kTouchUp = 0x004, kTouchDown = 0x008,
+    kTouchOne = 0x010, kTouchTwo = 0x020, kTouchA = 0x040, kTouchPlus = 0x080, kTouchMinus = 0x100,
+};
+void SetTouchState(uint32_t touchButtons, bool shake, float tilt);
+
 } // namespace VirtualRemote

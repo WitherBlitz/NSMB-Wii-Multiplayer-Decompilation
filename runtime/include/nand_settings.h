@@ -2,7 +2,9 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <cstdint>
 #include <filesystem>
@@ -201,7 +203,18 @@ inline bool Ensure(const std::filesystem::path& root, std::string& error,
 #ifdef _WIN32
         published = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH) != 0;
 #else
-        published = ::link(temporary.c_str(), path.c_str()) == 0;
+        if (::link(temporary.c_str(), path.c_str()) == 0) {
+            published = true;
+        } else if (errno != EEXIST) {
+            // Some filesystems refuse hard links outright (Android's shared storage, where the
+            // app keeps its NAND, denies link(2)). Publish with a rename that only goes ahead
+            // while no settings file exists; a launcher racing us in that window is harmless,
+            // since the winner is re-read from NAND below either way.
+            std::error_code existsEc;
+            if (!std::filesystem::exists(path, existsEc) && !existsEc) {
+                published = std::rename(temporary.c_str(), path.c_str()) == 0;
+            }
+        }
 #endif
     }
     std::filesystem::remove(temporary, ec);

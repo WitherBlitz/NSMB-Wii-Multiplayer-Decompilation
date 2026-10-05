@@ -11,6 +11,12 @@
 #elif (defined(__APPLE__) || defined(__ANDROID__)) && defined(__aarch64__)
 #include <sys/mman.h>
 #include <unistd.h>
+#if defined(__ANDROID__)
+#include <pthread.h>
+
+#include <cstdint>
+#include <vector>
+#endif
 
 extern "C" void mkw_co_switch(void** targetSp, void** sourceSp);
 extern "C" void* mkw_co_init(void* stackTop, void (*entry)(void*), void* argument);
@@ -79,12 +85,63 @@ struct Context {
     void* savedStackPointer = nullptr;
     void* stack = nullptr;
     std::size_t stackSize = 0;
+    bool arenaStack = false;  // Android: carved from the host thread's stack, recycled not unmapped
 };
 
 // Guest scheduling is confined to the initialized main host thread. Keeping
 // this as ordinary process state also avoids relying on Darwin TLS internals
 // while executing on a manually managed stack.
 Context* g_current = nullptr;
+
+#if defined(__ANDROID__)
+// ART compares the stack pointer with the Java thread's stack bounds whenever native code calls
+// into Java (SDL does, for input and lifecycle events, from inside the guest scheduler) and treats
+// anything outside them as a stack overflow. Guest fiber stacks therefore come from the host
+// thread's own stack (64 MB, set where SDLActivity creates the thread): the lower half, above a
+// generous skip over ART's protected region, while the thread's own frames keep the upper half.
+struct StackArena {
+    uintptr_t next = 0;   // first never-used address
+    uintptr_t limit = 0;  // end of the arena; the thread's own frames live above it
+    std::vector<std::pair<void*, std::size_t>> freed;  // stacks of destroyed fibers, for reuse
+};
+StackArena g_arena;
+constexpr std::size_t kArenaSkipBytes = 2u * 1024 * 1024;
+
+void InitializeStackArena()
+{
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) {
+        return;
+    }
+    void* base = nullptr;
+    std::size_t size = 0;
+    pthread_attr_getstack(&attr, &base, &size);
+    pthread_attr_destroy(&attr);
+    if (size < 16u * 1024 * 1024) {
+        return;  // a small thread stack: fall back to separate mappings
+    }
+    const uintptr_t low = reinterpret_cast<uintptr_t>(base);
+    g_arena.next = low + kArenaSkipBytes;
+    g_arena.limit = low + size / 2;
+}
+
+void* AllocateArenaStack(std::size_t totalSize)
+{
+    for (auto it = g_arena.freed.begin(); it != g_arena.freed.end(); ++it) {
+        if (it->second == totalSize) {
+            void* stack = it->first;
+            g_arena.freed.erase(it);
+            return stack;
+        }
+    }
+    if (g_arena.next == 0 || g_arena.next + totalSize > g_arena.limit) {
+        return nullptr;
+    }
+    void* stack = reinterpret_cast<void*>(g_arena.next);
+    g_arena.next += totalSize;
+    return stack;
+}
+#endif
 }
 
 bool InitializeScheduler(Handle* scheduler)
@@ -92,6 +149,9 @@ bool InitializeScheduler(Handle* scheduler)
     auto* context = new Context();
     g_current = context;
     *scheduler = context;
+#if defined(__ANDROID__)
+    InitializeStackArena();
+#endif
     return true;
 }
 
@@ -109,15 +169,23 @@ Handle Create(std::size_t stackSize, Entry entry, void* argument)
     auto* context = new Context();
     const std::size_t guardSize = static_cast<std::size_t>(getpagesize());
     const std::size_t totalSize = stackSize + guardSize;
-    context->stack = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE,
-                          MAP_ANON | MAP_PRIVATE, -1, 0);
-    if (context->stack == MAP_FAILED) {
-        delete context;
-        return nullptr;
+#if defined(__ANDROID__)
+    context->stack = AllocateArenaStack(totalSize);
+    context->arenaStack = context->stack != nullptr;
+#endif
+    if (!context->stack) {
+        context->stack = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE,
+                              MAP_ANON | MAP_PRIVATE, -1, 0);
+        if (context->stack == MAP_FAILED) {
+            delete context;
+            return nullptr;
+        }
     }
     // Fault on stack overflow instead of corrupting the preceding mapping.
     if (mprotect(context->stack, guardSize, PROT_NONE) != 0) {
-        munmap(context->stack, totalSize);
+        if (!context->arenaStack) {
+            munmap(context->stack, totalSize);
+        }
         delete context;
         return nullptr;
     }
@@ -135,6 +203,14 @@ void Destroy(Handle context)
         return;
     }
     if (nativeContext->stack) {
+#if defined(__ANDROID__)
+        if (nativeContext->arenaStack) {
+            // Arena stacks are part of the host thread's stack: make the guard page ordinary
+            // memory again and keep the block for the next fiber.
+            mprotect(nativeContext->stack, static_cast<std::size_t>(getpagesize()), PROT_READ | PROT_WRITE);
+            g_arena.freed.emplace_back(nativeContext->stack, nativeContext->stackSize);
+        } else
+#endif
         munmap(nativeContext->stack, nativeContext->stackSize);
     }
     delete nativeContext;

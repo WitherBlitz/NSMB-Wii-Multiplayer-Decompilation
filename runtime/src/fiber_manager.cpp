@@ -477,11 +477,26 @@ void GuestFiberManager::DumpGuestThreads(std::ostream& os) {
     }
     os << "[fiber] " << s_fibers.size() << " guest thread(s); current 0x" << std::hex << std::uppercase
        << s_currentGuestThread << std::dec << std::nouppercase << std::endl;
+    // The guest OS's own view (NSMBW addresses): which threads it can run and who sleeps on the VI
+    // retrace queue. A thread the host calls READY but the OS never queues is waiting on something.
+    const auto word = [](uint32_t addr) {
+        uint32_t value = 0;
+        return Memory::TryRead32(addr, value) ? value : 0xDEADDEADu;
+    };
+    os << "[fiber] OS: RunQueueBits=0x" << std::hex << std::uppercase << word(0x8042A708u)
+       << " Reschedule=0x" << word(0x8042A700u) << " retraceQueue head=0x" << word(0x8042A848u)
+       << " tail=0x" << word(0x8042A84Cu) << " current=0x" << word(kOSCurrentContextAddr)
+       << " running=0x" << word(kOSRunningContextAddr) << std::dec << std::nouppercase << std::endl;
     for (const auto& [thread, fiber] : s_fibers) {
         os << "[fiber] thread 0x" << std::hex << std::uppercase << thread << " entry 0x" << fiber.entryPoint
            << std::dec << std::nouppercase << " state " << static_cast<uint32_t>(fiber.state)
            << (fiber.isSchedulerFiber ? " (scheduler)" : "") << (fiber.terminated ? " (terminated)" : "")
            << (thread == s_currentGuestThread ? " (current)" : "") << std::endl;
+        // OSThread: state (u16) +0x2C8, suspend +0x2CC, priority +0x2D0, queue (waiting on) +0x2DC.
+        os << "[fiber]   OSThread state=" << (word(thread + 0x2C8u) >> 16) << " suspend="
+           << static_cast<int32_t>(word(thread + 0x2CCu)) << " priority="
+           << static_cast<int32_t>(word(thread + 0x2D0u)) << " queue=0x" << std::hex << std::uppercase
+           << word(thread + 0x2DCu) << std::dec << std::nouppercase << std::endl;
         SystemBridge::DumpCpuState(os, &fiber.cpuContext);
         SystemBridge::DumpGuestStack(os, &fiber.cpuContext);
     }

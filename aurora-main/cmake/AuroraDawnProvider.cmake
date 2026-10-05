@@ -231,7 +231,9 @@ elseif (_aurora_dawn_provider STREQUAL "package")
   )
     if (EXISTS "${_cmake_path}/DawnConfig.cmake")
       set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL ON)
-      find_package(Dawn REQUIRED CONFIG PATHS "${_cmake_path}" NO_DEFAULT_PATH)
+      # The package is an explicit, hash-pinned host path. Cross toolchains such as the Android
+      # NDK re-root every package search into their sysroot, which would never find it.
+      find_package(Dawn REQUIRED CONFIG PATHS "${_cmake_path}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
       set(CMAKE_FIND_PACKAGE_TARGETS_GLOBAL OFF)
       set(_dawn_cmake_found TRUE)
       break()
