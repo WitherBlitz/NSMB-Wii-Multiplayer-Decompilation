@@ -28,10 +28,11 @@ public sealed class ModDataPatchWriterTests
 
             var assemblyPath = Path.Combine(root, "cpp", "mod_data_patches_blobs.S");
             var assembly = File.ReadAllText(assemblyPath);
-            var symbolPrefix = OperatingSystem.IsMacOS() ? "_" : "";
-            Assert.Contains($".globl {symbolPrefix}kModuleImage", assembly, StringComparison.Ordinal);
-            Assert.Contains($".globl {symbolPrefix}kKamekCodeSha1Digest", assembly, StringComparison.Ordinal);
-            Assert.DoesNotContain("__APPLE__", assembly, StringComparison.Ordinal);
+            // One file serves every target: the compiler's preprocessor picks the section and the
+            // symbol spelling (Mach-O's leading underscore), so a cross build can reuse it.
+            Assert.Contains(".globl WC_BLOB_SYMBOL(kModuleImage)", assembly, StringComparison.Ordinal);
+            Assert.Contains(".globl WC_BLOB_SYMBOL(kKamekCodeSha1Digest)", assembly, StringComparison.Ordinal);
+            Assert.Contains("#elif defined(__APPLE__)", assembly, StringComparison.Ordinal);
             Assert.Contains(".incbin", assembly, StringComparison.Ordinal);
 
             var timestamps = new[] { cppPath, assemblyPath }

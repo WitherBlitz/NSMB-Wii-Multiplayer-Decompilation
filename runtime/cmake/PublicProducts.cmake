@@ -89,6 +89,8 @@ elseif(MKW_PLATFORM_LINUX)
     # ${CMAKE_DL_LIBS} for music_attenuation.cpp's dlopen of libdbus-1 (MPRIS
     # media monitoring).
     target_link_libraries(mkw_runtime_common PRIVATE mkw::libco ${CMAKE_DL_LIBS})
+elseif(MKW_PLATFORM_ANDROID)
+    target_link_libraries(mkw_runtime_common PRIVATE android log ${CMAKE_DL_LIBS})
 endif()
 
 if(MKW_PLATFORM_MACOS)
@@ -241,6 +243,14 @@ function(mkw_configure_product target)
         # here for the same reason: music_attenuation.cpp's dlopen(libdbus-1) lives in those
         # objects (empty string on glibc >= 2.34, where dl* is in libc).
         target_link_libraries(${target} PRIVATE mkw::libco ${CMAKE_DL_LIBS})
+    elseif(MKW_PLATFORM_ANDROID)
+        # The same object-library gap as above: the product link needs the libraries the runtime
+        # objects call into. SDL's Android activity loads the product as libmain.so and runs its
+        # exported SDL_main (runtime/src/main.cpp). 16 KiB pages keep it loadable on Android 15+
+        # devices that use them.
+        target_link_libraries(${target} PRIVATE android log ${CMAKE_DL_LIBS})
+        target_link_options(${target} PRIVATE "LINKER:-z,max-page-size=16384" "LINKER:--no-undefined")
+        set_target_properties(${target} PROPERTIES OUTPUT_NAME main)
     endif()
     if(MKW_PLATFORM_WINDOWS)
         foreach(runtime_dll libc++.dll libunwind.dll)
@@ -308,7 +318,11 @@ function(mkw_configure_product target)
     endif()
 endfunction()
 
-add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
+if(MKW_PLATFORM_ANDROID)
+    add_library(WiiCompiled SHARED "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
+else()
+    add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
+endif()
 mkw_configure_product(WiiCompiled)
 target_precompile_headers(WiiCompiled PRIVATE
     "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
@@ -339,6 +353,10 @@ endif()
 # tuning rather than leaving target-specific performance on the table.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
     set(MKW_BASELINE_ARCH_FLAG -march=x86-64-v3)
+elseif(MKW_PLATFORM_ANDROID)
+    # Cross-compiled, so -mcpu=native would describe the build machine. ARMv8.2-A (LSE atomics,
+    # RCpc loads) is the floor of every Android phone since Cortex-A55/A75.
+    set(MKW_BASELINE_ARCH_FLAG -march=armv8.2-a)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
     set(MKW_BASELINE_ARCH_FLAG -mcpu=native)
 else()

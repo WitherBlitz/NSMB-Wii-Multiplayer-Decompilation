@@ -1525,7 +1525,14 @@ int RuntimeMain(int argc, char** argv) {
     }
 }
 
+#if defined(__ANDROID__)
+// SDL's Android activity loads libmain.so and runs the game through its exported SDL_main.
+extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char** argv) {
+    return RuntimeMain(argc, argv);
+}
+#else
 int main(int argc, char** argv) {
     return RuntimeMain(argc, argv);
 }
+#endif
 extern "C" bool g_dynamicAspectRatioEnabled = false;

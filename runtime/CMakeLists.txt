@@ -35,11 +35,16 @@ elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|arm
     else()
         set(MKW_PLATFORM_MACOS_ARM64 TRUE)
     endif()
+elseif(ANDROID AND CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+    # Cross-built with the NDK. The game is a shared library (libmain.so) that SDL's Android
+    # activity loads; see cmake/PublicProducts.cmake.
+    set(MKW_PLATFORM_ANDROID TRUE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|aarch64|arm64|ARM64)$")
     set(MKW_PLATFORM_LINUX TRUE)
 else()
     message(FATAL_ERROR
-        "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, or Apple Clang on macOS x86_64/arm64")
+        "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, "
+        "Apple Clang on macOS x86_64/arm64, or the NDK for Android arm64-v8a")
 endif()
 
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -330,6 +335,12 @@ if(MKW_PLATFORM_MACOS)
     endif()
 else()
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory_macos.cpp")
+    if(MKW_PLATFORM_ANDROID)
+        # Android shares HostContext's AArch64 assembly backend with Apple Silicon, in its ELF
+        # spelling (and without touching x18, the thread's shadow-call-stack register).
+        enable_language(ASM)
+        list(APPEND SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/platform/android/co_switch.S")
+    endif()
 endif()
 set(MKW_PLATFORM_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/platform/host_platform.cpp")
 set(MKW_BASE_PRODUCT_SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/product/base_product.cpp")
