@@ -38,6 +38,9 @@ static int32_t WriteNandDataDir(uint32_t outPathPtr) {
 
 // fileInfoPtr -> fd -> live handle. Logs and returns null when the guest hands
 // us a descriptor that was never opened (or was already closed).
+// NSMBW bring-up: trace every NAND call (the async APIs forward to these synchronous ones).
+#define NSMBW_NAND_TRACE(...) RT_LOGF(RT_TAG_NAND, "[trace] " __VA_ARGS__)
+
 static FileHandle* ResolveNandFileHandle(const char* who, uint32_t fileInfoPtr) {
     const int32_t fd = static_cast<int32_t>(Memory::Read32(fileInfoPtr));
     FileHandle* handle = GetHandle(fd);
@@ -120,6 +123,7 @@ PPC_NATIVE_OVERRIDE(801DB140, NANDCheck_HLE, int32_t, (uint32_t blockSize, uint3
 
 extern "C" int32_t NANDOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
+    if (path) NSMBW_NAND_TRACE("NANDOpen '%s' mode %u\n", path, mode);
     if (!path || !fileInfoPtr) {
         LogNandError("NANDOpen", "invalid params: path=%p fileInfo=0x%08X", path, fileInfoPtr);
         return NAND_RESULT_INVALID;
@@ -194,12 +198,14 @@ extern "C" int32_t NANDOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t
             file = NandFopen(hostPath, fopenMode);
         }
         if (!file) {
-            LogNandError("NANDOpen", "FAILED to open");
+            LogNandError("NANDOpen", "FAILED to open '%s' (host '%s', mode %u)", path,
+                         HostPathText(hostPath).c_str(), mode);
             return NAND_RESULT_NOEXISTS;
         }
     }
 
     int32_t fd = AllocateFd(hostPath, file, mode);
+    NSMBW_NAND_TRACE("NANDOpen -> fd %d (fileInfo 0x%08X)\n", fd, fileInfoPtr);
     Memory::Write32(fileInfoPtr, static_cast<uint32_t>(fd));
     Memory::Write8(fileInfoPtr + 0x8a, NAND_OPEN_FLAG_OPEN);
     return NAND_RESULT_OK;
@@ -207,6 +213,8 @@ extern "C" int32_t NANDOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t
 PPC_NATIVE_OVERRIDE(801D95B0, NANDOpen_HLE, int32_t, (uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode), (pathPtr, fileInfoPtr, mode));
 
 extern "C" int32_t NANDClose_HLE(uint32_t fileInfoPtr) {
+    NSMBW_NAND_TRACE("NANDClose fileInfo=0x%08X fd=%d\n", fileInfoPtr,
+                     fileInfoPtr ? static_cast<int32_t>(Memory::Read32(fileInfoPtr)) : -1);
     if (!fileInfoPtr) {
         return NAND_RESULT_INVALID;
     }
@@ -239,6 +247,8 @@ extern "C" int32_t NANDClose_HLE(uint32_t fileInfoPtr) {
 PPC_NATIVE_OVERRIDE(801D9850, NANDClose_HLE, int32_t, (uint32_t fileInfoPtr), (fileInfoPtr));
 
 extern "C" int32_t NANDRead_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length) {
+    NSMBW_NAND_TRACE("NANDRead fileInfo=0x%08X fd=%d len=%u\n", fileInfoPtr,
+                     fileInfoPtr ? static_cast<int32_t>(Memory::Read32(fileInfoPtr)) : -1, length);
     if (!fileInfoPtr) {
         return NAND_RESULT_INVALID;
     }
@@ -259,6 +269,8 @@ extern "C" int32_t NANDRead_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint32
 PPC_NATIVE_OVERRIDE(801D89F0, NANDRead_HLE, int32_t, (uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length), (fileInfoPtr, bufferPtr, length));
 
 extern "C" int32_t NANDWrite_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length) {
+    NSMBW_NAND_TRACE("NANDWrite fileInfo=0x%08X fd=%d len=%u\n", fileInfoPtr,
+                     fileInfoPtr ? static_cast<int32_t>(Memory::Read32(fileInfoPtr)) : -1, length);
     if (!fileInfoPtr) {
         return NAND_RESULT_INVALID;
     }
@@ -315,6 +327,7 @@ PPC_NATIVE_OVERRIDE(801D9040, NANDGetLength_HLE, int32_t, (uint32_t fileInfoPtr,
 
 extern "C" int32_t NANDCreate_HLE(uint32_t pathPtr, uint32_t perm, uint32_t attr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
+    if (path) NSMBW_NAND_TRACE("NANDCreate '%s' perm 0x%X attr 0x%X\n", path, perm, attr);
     if (!path) {
         return NAND_RESULT_INVALID;
     }
@@ -340,6 +353,7 @@ PPC_NATIVE_OVERRIDE(801D84E0, NANDCreate_HLE, int32_t, (uint32_t pathPtr, uint32
 
 extern "C" int32_t NANDDelete_HLE(uint32_t pathPtr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
+    if (path) NSMBW_NAND_TRACE("NANDDelete '%s'\n", path);
     if (!path) {
         return NAND_RESULT_INVALID;
     }
@@ -360,6 +374,7 @@ PPC_NATIVE_OVERRIDE(801D87E0, NANDDelete_HLE, int32_t, (uint32_t pathPtr), (path
 
 extern "C" int32_t NANDCreateDir_HLE(uint32_t pathPtr, uint32_t perm, uint32_t attr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
+    if (path) NSMBW_NAND_TRACE("NANDCreateDir '%s'\n", path);
     if (!path) {
         return NAND_RESULT_INVALID;
     }
@@ -537,6 +552,7 @@ PPC_NATIVE_OVERRIDE(801D8FD0, NANDMove_HLE, int32_t, (uint32_t srcPathPtr, uint3
 
 extern "C" int32_t NANDGetStatus_HLE(uint32_t pathPtr, uint32_t outStatusPtr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
+    if (path) NSMBW_NAND_TRACE("NANDGetStatus '%s'\n", path);
     if (!path || !outStatusPtr) {
         return NAND_RESULT_INVALID;
     }
@@ -560,6 +576,7 @@ PPC_NATIVE_OVERRIDE(8019C380, NANDGetStatus_HLE, int32_t, (uint32_t pathPtr, uin
 
 extern "C" int32_t NANDGetType_HLE(uint32_t pathPtr, uint32_t outTypePtr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
+    if (path) NSMBW_NAND_TRACE("NANDGetType '%s'\n", path);
     if (!path || !outTypePtr) {
         return NAND_RESULT_INVALID;
     }

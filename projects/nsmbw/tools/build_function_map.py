@@ -107,15 +107,31 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nsmbw_versions as ver  # noqa: E402
 dol_funcs = {}
 dol_objects = {}  # every symbol-table object (functions and data) in main.dol: start -> length
+table = []        # (c_addr, kind, length, e1 or None) in C order
 for row in (ROOT / "maps" / "nsmbw_hashes.txt").read_text().splitlines():
     cols = [c.strip() for c in row.split("|")]
-    e1 = ver.convert("C", "E1", int(cols[0], 16))
+    c_addr = int(cols[0], 16)
+    table.append((c_addr, cols[1], int(cols[4].split()[1], 16), ver.convert("C", "E1", c_addr)))
+table.sort()
+# A few C addresses have no unique preimage through the address-map chain. Recover them when the
+# nearest converted neighbours on both sides shift by the same delta (the code in between did not move).
+recovered = 0
+for i, (c_addr, kind, length, e1) in enumerate(table):
+    if e1 is not None:
+        continue
+    prev = next((t for t in reversed(table[:i]) if t[3] is not None), None)
+    nxt = next((t for t in table[i + 1:] if t[3] is not None), None)
+    if prev and nxt and prev[3] - prev[0] == nxt[3] - nxt[0]:
+        table[i] = (c_addr, kind, length, (c_addr + prev[3] - prev[0]) & 0xFFFFFFFF)
+        recovered += 1
+for c_addr, kind, length, e1 in table:
     if e1 is None:
         continue
-    length = int(cols[4].split()[1], 16)
     dol_objects[e1] = max(length, 1)
-    if cols[1] == "FUNCTION":
+    if kind == "FUNCTION":
         dol_funcs[e1] = length
+print(f"symbol-table entries recovered by neighbour delta: {recovered}; still unconvertible: "
+      f"{sum(1 for t in table if t[3] is None)}")
 dol_sorted = sorted(dol_funcs)
 obj_sorted = sorted(dol_objects)
 
@@ -144,7 +160,11 @@ TERMINATOR_WORDS = {0x4E800020, 0x4C000064, 0x4E800420}  # blr, rfi, bctr
 def plausible_gap_start(a):
     """A heuristic start in a gap no symbol covers (E1-only code): must follow a terminator and
     must not be text (strings such as MetroTRK's messages sit right after functions in .init)."""
-    prev, cur = word(a - 4), word(a)
+    cur = word(a)
+    p = a - 4
+    while word(p) == 0 and a - p < 0x40:  # functions are 16-byte aligned; skip the zero padding
+        p -= 4
+    prev = word(p)
     after_terminator = prev in TERMINATOR_WORDS or ((prev >> 26) == 18 and (prev & 1) == 0)
     looks_ascii = all(0x20 <= b <= 0x7E for b in cur.to_bytes(4, "big"))
     return after_terminator and not looks_ascii

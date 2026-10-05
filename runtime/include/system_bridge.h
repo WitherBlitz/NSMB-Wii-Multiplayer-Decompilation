@@ -87,5 +87,7 @@ public:
     // `mem1Path` and MEM2 to `mem1Path + ".mem2"`, logging outcomes to `os`.
     static void DumpCrashHeuristics(std::ostream& os, const struct CpuContext* cpu,
                                     const uint32_t* missingGuestTarget);
+    // Stack hints and the guest backchain for `cpu` (also used for live stall diagnostics).
+    static void DumpGuestStack(std::ostream& os, const struct CpuContext* cpu);
     static void WriteGuestMemorySnapshot(std::ostream& os, const std::filesystem::path& mem1Path);
 };

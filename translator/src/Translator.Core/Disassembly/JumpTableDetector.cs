@@ -181,6 +181,49 @@ internal static class JumpTableDetector
         return -1;
     }
 
+    /// <summary>
+    /// <c>rlwinm rA, rS, 2, 0, 29</c> (slwi by two) or <c>mulli rA, rS, 4</c>: the case index scaled to a
+    /// word offset. Returns the index register <c>rS</c>.
+    /// </summary>
+    private static bool TryGetScaleByFourSource(PpcInstruction ins, out string source)
+    {
+        source = string.Empty;
+        if (ins.Operands.Count >= 5 && ins.Mnemonic is "rlwinm" &&
+            ins.Operands[1] is PpcRegisterOperand rs &&
+            ins.Operands[2] is PpcImmediateOperand { Value: 2 } &&
+            ins.Operands[3] is PpcImmediateOperand { Value: 0 } &&
+            ins.Operands[4] is PpcImmediateOperand { Value: 29 })
+        {
+            source = rs.Name;
+            return true;
+        }
+
+        if (ins.Operands.Count >= 3 && ins.Mnemonic is "mulli" &&
+            ins.Operands[1] is PpcRegisterOperand ra &&
+            ins.Operands[2] is PpcImmediateOperand { Value: 4 })
+        {
+            source = ra.Name;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether an instruction whose first operand is a GPR writes it. Stores, compares, traps and
+    /// moves to special registers only read their first operand.
+    /// </summary>
+    private static bool WritesFirstOperand(PpcInstruction ins)
+    {
+        var mnemonic = ins.Mnemonic;
+        return !(mnemonic.StartsWith("st", StringComparison.OrdinalIgnoreCase) ||
+                 mnemonic.StartsWith("cmp", StringComparison.OrdinalIgnoreCase) ||
+                 mnemonic.StartsWith("tw", StringComparison.OrdinalIgnoreCase) ||
+                 mnemonic.StartsWith("mt", StringComparison.OrdinalIgnoreCase) ||
+                 mnemonic.StartsWith("dcb", StringComparison.OrdinalIgnoreCase) ||
+                 mnemonic.StartsWith("icb", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool TryResolveLisAddiConstant(IReadOnlyList<PpcInstruction> ordered, int startIndex, string register, out uint value)
     {
         var haveOffset = false;
@@ -383,21 +426,40 @@ internal static class JumpTableDetector
 
     private static bool TryFindUpperBound(IReadOnlyList<PpcInstruction> ordered, int startIndex, string register, out int upperBound)
     {
-        // Preferred: compare directly on the same register used for lwzx indexing.
+        // Preferred: the bound compare on the case index that feeds lwzx. Trace the index register
+        // backwards through the scale-by-four that turns the case number into a byte offset (CodeWarrior
+        // emits "cmplwi rI, N; bgt default; slwi rX, rI, 2; lwzx rT, rBase, rX"), and stop at any other
+        // write to the tracked register: a compare found beyond it tests an older, unrelated value (NSMBW's
+        // TagProcessor_c::preProcess reuses r0, whose earlier "cmplwi r0, 0" turned a 20-case table into one).
+        var tracked = register;
         for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
         {
             var ins = ordered[i];
             if (ins.Operands.Count < 2 || ins.Operands[0] is not PpcRegisterOperand reg ||
-                !string.Equals(reg.Name, register, StringComparison.OrdinalIgnoreCase) ||
-                ins.Operands[1] is not PpcImmediateOperand imm)
+                !string.Equals(reg.Name, tracked, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
             if (ins.Mnemonic is "cmplwi" or "cmpwi")
             {
-                upperBound = imm.Value;
-                return true;
+                if (ins.Operands[1] is PpcImmediateOperand imm)
+                {
+                    upperBound = imm.Value;
+                    return true;
+                }
+                continue;
+            }
+
+            if (TryGetScaleByFourSource(ins, out var source))
+            {
+                tracked = source;
+                continue;
+            }
+
+            if (WritesFirstOperand(ins))
+            {
+                break;
             }
         }
 

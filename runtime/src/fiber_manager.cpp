@@ -4,6 +4,7 @@
 #include "hle_stubs.h"
 #include "host_context.h"
 #include "runtime_log.h"
+#include "system_bridge.h"
 
 // Defined in hle/os/os_sleep.cpp; the sleep-timer table is file-local there.
 
@@ -466,6 +467,24 @@ GuestFiber* GuestFiberManager::GetFiber(uint32_t guestThreadAddr) {
 bool GuestFiberManager::HasFiber(uint32_t guestThreadAddr) {
     std::lock_guard<std::mutex> lock(s_mutex);
     return s_fibers.count(guestThreadAddr) > 0;
+}
+
+void GuestFiberManager::DumpGuestThreads(std::ostream& os) {
+    std::unique_lock<std::mutex> lock(s_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        os << "[fiber] thread dump skipped: fiber table busy" << std::endl;
+        return;
+    }
+    os << "[fiber] " << s_fibers.size() << " guest thread(s); current 0x" << std::hex << std::uppercase
+       << s_currentGuestThread << std::dec << std::nouppercase << std::endl;
+    for (const auto& [thread, fiber] : s_fibers) {
+        os << "[fiber] thread 0x" << std::hex << std::uppercase << thread << " entry 0x" << fiber.entryPoint
+           << std::dec << std::nouppercase << " state " << static_cast<uint32_t>(fiber.state)
+           << (fiber.isSchedulerFiber ? " (scheduler)" : "") << (fiber.terminated ? " (terminated)" : "")
+           << (thread == s_currentGuestThread ? " (current)" : "") << std::endl;
+        SystemBridge::DumpCpuState(os, &fiber.cpuContext);
+        SystemBridge::DumpGuestStack(os, &fiber.cpuContext);
+    }
 }
 
 bool GuestFiberManager::IsTerminated(uint32_t guestThreadAddr) {

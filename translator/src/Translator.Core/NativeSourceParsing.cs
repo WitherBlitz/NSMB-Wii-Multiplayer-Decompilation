@@ -23,8 +23,65 @@ internal static class NativeSourceParsing
             .Select(path => new NativeSourceFile(
                 path,
                 Path.GetRelativePath(root, path).Replace('\\', '/'),
-                StripCommentsAndLiterals(File.ReadAllText(path))))
+                StripCommentsAndLiterals(StripDisabledBlocks(File.ReadAllText(path)))))
             .ToArray();
+    }
+
+    /// <summary>
+    /// Blanks every line inside an <c>#if 0</c> branch (up to its matching <c>#else</c>, <c>#elif</c> or
+    /// <c>#endif</c>) so marker scanning sees the same registrations the compiler does. A native
+    /// registration disabled with <c>#if 0</c> must not make the translator skip that address, or the
+    /// function ends up neither translated nor provided natively. Other conditions are not evaluated
+    /// and stay visible; lines are blanked rather than removed to keep line numbers stable.
+    /// </summary>
+    public static string StripDisabledBlocks(string content)
+    {
+        var lines = content.Split('\n');
+        var frames = new List<(bool ZeroIf, bool Active)>();
+        var output = new StringBuilder(content.Length);
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var line = lines[index];
+            var trimmed = line.TrimStart();
+            var visibleBefore = frames.TrueForAll(static frame => frame.Active);
+            if (trimmed.StartsWith('#'))
+            {
+                var directive = trimmed[1..].TrimStart();
+                if (directive.StartsWith("ifdef", StringComparison.Ordinal) ||
+                    directive.StartsWith("ifndef", StringComparison.Ordinal))
+                {
+                    frames.Add((false, true));
+                }
+                else if (directive.StartsWith("if", StringComparison.Ordinal))
+                {
+                    var condition = directive[2..].TrimStart();
+                    var zero = condition.StartsWith('0') &&
+                               (condition.Length == 1 || !char.IsLetterOrDigit(condition[1]) && condition[1] != '_');
+                    frames.Add((zero, !zero));
+                }
+                else if ((directive.StartsWith("else", StringComparison.Ordinal) ||
+                          directive.StartsWith("elif", StringComparison.Ordinal)) && frames.Count > 0)
+                {
+                    var top = frames[^1];
+                    if (top.ZeroIf)
+                    {
+                        frames[^1] = (true, true);  // the branch after "#if 0" is live
+                    }
+                }
+                else if (directive.StartsWith("endif", StringComparison.Ordinal) && frames.Count > 0)
+                {
+                    frames.RemoveAt(frames.Count - 1);
+                }
+            }
+
+            output.Append(visibleBefore && frames.TrueForAll(static frame => frame.Active) ? line : string.Empty);
+            if (index < lines.Length - 1)
+            {
+                output.Append('\n');
+            }
+        }
+
+        return output.ToString();
     }
 
     public static IEnumerable<string> SplitArguments(string arguments)

@@ -95,6 +95,9 @@ public:
     
     // Check if a fiber exists for a guest thread
     static bool HasFiber(uint32_t guestThreadAddr);
+    // Diagnostics: every guest thread's state, saved registers and stack backchain. Uses try_lock so
+    // a watchdog can call it while guest code holds the fiber mutex without deadlocking.
+    static void DumpGuestThreads(std::ostream& os);
     static bool IsTerminated(uint32_t guestThreadAddr);
 
 private:

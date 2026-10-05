@@ -442,6 +442,14 @@ void SystemBridge::WriteGuestMemorySnapshot(std::ostream& os, const std::filesys
     }
 }
 
+void SystemBridge::DumpGuestStack(std::ostream& os, const CpuContext* cpu) {
+    if (!cpu) {
+        return;
+    }
+    DumpGuestStackHints(os, cpu);
+    DumpGuestBackchain(os, cpu);
+}
+
 void SystemBridge::DumpCrashHeuristics(std::ostream& os, const CpuContext* cpu,
                                        const uint32_t* missingGuestTarget) {
     if (!cpu) {
@@ -516,6 +524,10 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     entries.push_back({0x80000004u, 0x30310001u, "Disc maker/id"});  // "01", disc 0, version 1 (boot.bin)
     entries.push_back({0x80003180u, 0x534D4E45u, "OS app game code"}); // SMNE
     entries.push_back({0x80003194u, 0x534D4E45u, "OS app gamename"});  // SMNE
+    // NSMBW's OSInit (newer SDK than Mario Kart's) compares the running IOS (0x80003140) with the
+    // title's required IOS at 0x80003188 - same major, revision not older - and calls OSFatal
+    // ("ERROR #002") otherwise. The boot path leaves the TMD's IOS here; Dolphin writes the IOS word.
+    entries.push_back({0x80003188u, kIos36Version, "Title's required IOS (IOS53)"});
     if (RuntimeProduct::IsRetroRewind()) {
         entries.push_back({0x800017D8u, 0x00000001u, "Retro Rewind recomp runtime marker", true});
     }

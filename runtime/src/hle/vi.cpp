@@ -262,6 +262,32 @@ static std::atomic<bool> s_inAdvanceRetrace{false};
 // end the freshly pre-warmed empty frame and show it as a black frame group.
 static std::atomic<bool> s_presentSequenceActive{false};
 
+// NSMBW bring-up: frames the guest actually handed to the presenter (an XFB was ready), and a one-shot
+// watchdog that dumps every guest thread's state if none arrived after 12 s and again after 30 s, so
+// a boot that stalls in a wait loop shows where each thread is parked.
+static std::atomic<uint32_t> s_presentedXfbFrames{0};
+
+void StartStallWatchdogOnce() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::thread([] {
+            const auto start = std::chrono::steady_clock::now();
+            for (const int seconds : {12, 30}) {
+                std::this_thread::sleep_until(start + std::chrono::seconds(seconds));
+                const uint32_t frames = s_presentedXfbFrames.load(std::memory_order_relaxed);
+                const bool black = g_vi.black;  // racy read; diagnostics only
+                RT_LOGF(RT_TAG_VI, "[watchdog] %d s: %u guest frame(s) presented, VI black=%d\n", seconds, frames,
+                        black ? 1 : 0);
+                if (frames != 0 && !black) {
+                    continue;
+                }
+                RT_LOGF(RT_TAG_VI, "[watchdog] nothing visible yet; guest threads:\n");
+                Fiber::GuestFiberManager::DumpGuestThreads(std::cerr);
+            }
+        }).detach();
+    });
+}
+
 // NSMBW: report where the game's own loader places its four boot RELs. The translated build was
 // pre-linked for fixed heap addresses (projects/nsmbw/tools/prelink_rels.py); a mismatch means the
 // guest heap layout differs from hardware and translated REL code would run against wrong data.
@@ -316,6 +342,7 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
     if (s_inAdvanceRetrace.exchange(true)) {
         return;
     }
+    StartStallWatchdogOnce();
     LogGuestModulesOnce();
     
     uint32_t preCb = 0;
@@ -569,6 +596,19 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
     struct SequenceGuard {
         ~SequenceGuard() { s_presentSequenceActive.store(false, std::memory_order_release); }
     } sequenceGuard;
+    if (presentedXfb) {
+        s_presentedXfbFrames.fetch_add(1, std::memory_order_relaxed);
+        // NSMBW: lift the runtime's startup cover at the game's first visible frame. Mario Kart's
+        // runtime lifted it from a StrapScene::CheckInput hook that auto-accepted its strap screen;
+        // NSMBW shows its own Wii Strap screen instead, and the player presses A as on a console.
+        static std::once_flag firstVisibleFrame;
+        if (!g_vi.black) {
+            std::call_once(firstVisibleFrame, [] {
+                RT_LOGF(RT_TAG_VI, "first visible guest frame presented; lifting the startup cover\n");
+                settings_overlay::NotifyStrapInputAccepted();
+            });
+        }
+    }
     Clock::time_point paceDeadline{};
     bool paceThisFrame = false;
     if (paceToRetrace) {
