@@ -69,5 +69,7 @@ extern "C" uint32_t EGG_Decomp_decodeSZS_80218c2c(uint32_t src, uint32_t dst)
     return expandSize;
 }
 
+#if 0  // NSMBW: NSMBW has no EGG::Decomp::decodeSZS (it uses EGG::StreamDecomp*); MKW-only fast path
 PPC_NATIVE_OVERRIDE(80218C2C, EGG_Decomp_decodeSZS_80218c2c, uint32_t,
                     (uint32_t src, uint32_t dst), (src, dst));
+#endif

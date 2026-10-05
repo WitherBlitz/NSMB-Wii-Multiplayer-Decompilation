@@ -10,7 +10,7 @@
 #include <cstring>
 
 
-extern "C" void func_8012B830(CpuContext* ctx);
+extern "C" void func_801A6D30(CpuContext* ctx);
 
 #if defined(__clang__)
 // PowerPC uses discrete fmuls/fadds; a fused multiply-add would change sample rounding.
@@ -24,8 +24,8 @@ constexpr uint32_t kSamplesPerFrame = 96;
 constexpr uint32_t kChannels = 3;
 
 // .sdata2 constants the guest function loads through r2.
-constexpr uint32_t kOneConstantAddr = 0x80388588u;   // 1.0f
-constexpr uint32_t kScaleConstantAddr = 0x8038858Cu; // 0.6f send pre-scale
+constexpr uint32_t kOneConstantAddr = 0x8042DFF0u;   // 1.0f (NSMBW .sdata2, loaded by AXFXReverbStdExpCallback)
+constexpr uint32_t kScaleConstantAddr = 0x8042DFF4u; // 0.6f send pre-scale (NSMBW)
 
 // AXFX_REVERBSTD_EXP field offsets (byte offsets into the struct in r4).
 constexpr uint32_t kFieldPreDelayCoef = 0x18;
@@ -346,7 +346,7 @@ extern "C" void AXFXReverbStdExpCallback_8012b830(CpuContext* ctx) {
     try {
         flags = Memory::Read32(stateAddr + ReverbStd::kFieldFlags);
     } catch (const Memory::AccessViolation&) {
-        func_8012B830(ctx);
+        func_801A6D30(ctx);
         return;
     }
     if (flags != 0) {
@@ -364,7 +364,7 @@ extern "C" void AXFXReverbStdExpCallback_8012b830(CpuContext* ctx) {
         built = false;
     }
     if (!built) {
-        func_8012B830(ctx);
+        func_801A6D30(ctx);
         return;
     }
 

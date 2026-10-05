@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "runtime_log.h"
 
+#if 0  // NSMBW: MKW-only. NSMBW links no EGG::TaskThread and no THP player (no .thp files on its disc).
 namespace {
 
 constexpr uint32_t kTaskMessageQueueOffset = 0x0Cu;
@@ -206,4 +207,7 @@ extern "C" void TaskThread_run_HLE_80242d7c(CpuContext* ctx) {
         ClearTaskJob(taskThread, job);
     }
 }
+#endif  // NSMBW: end of MKW EGG::TaskThread / THP player HLE
+#if 0  // NSMBW: MKW EGG::TaskThread / THP movie player; NSMBW has neither
 PPC_NATIVE_OVERRIDE_VOID(80242D7C, TaskThread_run_HLE_80242d7c, (CpuContext* ctx), (ctx));
+#endif

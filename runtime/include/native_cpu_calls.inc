@@ -92,7 +92,7 @@ template <> struct KnownNativeCpuCall<addr> { \
     static constexpr void (*Entry)(CpuContext*) = &fn; \
 }
 
-MKW_KNOWN_NATIVE_CPU_CALL(0x800847C0u, nw4r__lyt__detail__DrawQuad_800847c0);
-MKW_KNOWN_NATIVE_CPU_CALL(0x80084D20u, nw4r__lyt__detail__DrawQuad_80084d20);
+MKW_KNOWN_NATIVE_CPU_CALL(0x802B6C80u, nw4r__lyt__detail__DrawQuad_800847c0);
+MKW_KNOWN_NATIVE_CPU_CALL(0x802B71E0u, nw4r__lyt__detail__DrawQuad_80084d20);
 
 #undef MKW_KNOWN_NATIVE_CPU_CALL

@@ -186,6 +186,8 @@ std::optional<ExecutableRange> FindExecutableRange(uint32_t address, size_t leng
     return std::nullopt;
 }
 
+// MKW-only: executable ranges are registered solely by translated mods (Retro Rewind), so this
+// never runs for the NSMBW base game, whose own REL loading writes are therefore unguarded.
 bool IsKnownBaseRelLoaderWrite(const ExecutableRange& range) {
     if (range.name.find("StaticR.rel") == std::string::npos) {
         return false;

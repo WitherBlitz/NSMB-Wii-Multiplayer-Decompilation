@@ -31,21 +31,21 @@ constexpr uint32_t kMailReset = kTaskMailToDsp | 0x0002u;
 constexpr size_t kResamplingCoefficientCount = 0x800;
 constexpr uint32_t kMailContinue = kTaskMailToDsp | 0x0003u;
 constexpr uint32_t kAxSamplesPerFrame = 96u;
-constexpr uint32_t kAxDspTaskAddr = 0x802F81A0u;
-constexpr uint32_t kDspInitializedAddr = 0x80386608u;
-constexpr uint32_t kDspAssertPendingAddr = 0x80386610u;
-constexpr uint32_t kDspAssertTaskAddr = 0x80386614u;
-constexpr uint32_t kDspCurrentTaskAddr = 0x8038661Cu;
-constexpr uint32_t kDspFirstTaskAddr = 0x80386620u;
-constexpr uint32_t kDspRunningTaskAddr = 0x80386624u;
-constexpr uint32_t kAxIramMmemAddr = 0x8027F820u;
-constexpr uint32_t kAxDramMmemAddr = 0x802F8200u;
+constexpr uint32_t kAxDspTaskAddr = 0x8037CD00u;    // AX DSPTaskInfo passed to DSPAddTask by __AXOutInitDSP (NSMBW)
+constexpr uint32_t kDspInitializedAddr = 0x8042AA18u;    // __DSP_init_flag (NSMBW)
+constexpr uint32_t kDspAssertPendingAddr = 0x8042AA20u;  // __DSP_rude_task_pending (NSMBW)
+constexpr uint32_t kDspAssertTaskAddr = 0x8042AA24u;     // __DSP_rude_task (NSMBW)
+constexpr uint32_t kDspCurrentTaskAddr = 0x8042AA2Cu;    // __DSP_last_task (offset-matched to MKW) (NSMBW)
+constexpr uint32_t kDspFirstTaskAddr = 0x8042AA30u;      // __DSP_first_task (NSMBW)
+constexpr uint32_t kDspRunningTaskAddr = 0x8042AA34u;    // __DSP_curr_task (offset-matched to MKW) (NSMBW)
+constexpr uint32_t kAxIramMmemAddr = 0x8032F400u;   // axDspSlave microcode (NSMBW)
+constexpr uint32_t kAxDramMmemAddr = 0x8037CD60u;   // __AXDramImage (NSMBW)
 constexpr uint32_t kAxDramLength = 64u;
 constexpr uint32_t kAxDramDspAddr = 3282u;
 constexpr uint32_t kAxInitCallback = 0x801A1C50u;
 constexpr uint32_t kAxResumeCallback = 0x801A1C60u;
-constexpr uint32_t kAxDoneCallback = 0x801A1CD0u;
-constexpr uint32_t kAxRequestCallback = 0x801269B8u;
+constexpr uint32_t kAxDoneCallback = 0x801A1CC0u;    // __AXDSPDoneCallback (task+0x30 in NSMBW __AXOutInitDSP)
+constexpr uint32_t kAxRequestCallback = 0x801A1CD0u; // __AXDSPRequestCallback (task+0x34)
 
 extern uint32_t g_axTaskPtr;
 

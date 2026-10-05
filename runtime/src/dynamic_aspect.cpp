@@ -116,8 +116,12 @@ void SweepGfxNodeList(uint32_t list, bool offscreenList) {
 // record 2), so without this bypass they'd inherit the expansion and render vertically squashed.
 // Re-arms every scene transition since the offscreen renderer is a per-scene singleton.
 void AssertOffscreenScreenBypass() {
+    // NSMBW: the draw/offscreen lists are Mario Kart's (0x809C1830/0x809C183C fall inside
+    // NSMBW's d_enemiesNP); nothing to sweep until NSMBW's screens are mapped.
+#if 0  // NSMBW: MKW gfx node lists
     SweepGfxNodeList(kMkwGfxDrawList, /*offscreenList=*/false);
     SweepGfxNodeList(kMkwGfxOffscreenList, /*offscreenList=*/true);
+#endif
 }
 
 void WriteEggScreenRecord(uint32_t recordAddr, uint32_t width) {
@@ -129,6 +133,13 @@ void WriteEggScreenRecord(uint32_t recordAddr, uint32_t width) {
 }
 
 void ApplyEggScreenRecords(uint32_t surfaceWidth, uint32_t surfaceHeight) {
+    // NSMBW: these EGG::Screen records, projection scales and refresh calls are Mario Kart
+    // addresses. The host-side viewport policy (Aurora/VI aspect lock) still applies; the guest
+    // side stays untouched until NSMBW's EGG::Screen statics are mapped.
+    (void)surfaceWidth;
+    (void)surfaceHeight;
+    return;
+#if 0  // NSMBW: MKW EGG::Screen records
     using namespace MkwDynamicAspect;
     const uint32_t width43 =
         g_widescreenConfigured ? EggRecordWidth(kEggRecordWidth43, surfaceWidth, surfaceHeight)
@@ -157,6 +168,7 @@ void ApplyEggScreenRecords(uint32_t surfaceWidth, uint32_t surfaceHeight) {
     if (Memory::Read32(kEggActiveScreenPtr) != 0) {
         InvokeIndirectCpu(kEggScreenAspectHandler, &callbackCpu);
     }
+#endif
 }
 
 } // namespace

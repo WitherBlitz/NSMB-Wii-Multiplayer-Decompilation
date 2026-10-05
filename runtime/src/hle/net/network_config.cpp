@@ -5,9 +5,14 @@
 
 namespace NetworkHle {
 
+#if 0  // NSMBW: NHTTP is not linked into NSMBW
 extern "C" void func_801D8D30(CpuContext* ctx);
+#endif
+#if 0  // NSMBW: NHTTP is not linked into NSMBW
 extern "C" void func_801D9E94(CpuContext* ctx);
+#endif
 
+#if 0  // NSMBW: NHTTP is not linked into NSMBW
 static uint32_t GetNHttpSystemInfo(CpuContext* ctx, uint32_t& savedR3, uint32_t& savedR4, uint32_t& savedR5) {
     savedR3 = ctx->gpr[3];
     savedR4 = ctx->gpr[4];
@@ -19,7 +24,9 @@ static uint32_t GetNHttpSystemInfo(CpuContext* ctx, uint32_t& savedR3, uint32_t&
     ctx->gpr[5] = savedR5;
     return systemInfo;
 }
+#endif
 
+#if 0  // NSMBW: NHTTP is not linked into NSMBW
 extern "C" void NHTTPStartup_Reentrant_HLE_801d8d30(CpuContext* ctx) {
     if (!ctx) {
         return;
@@ -62,6 +69,7 @@ extern "C" void NHTTPStartup_Reentrant_HLE_801d8d30(CpuContext* ctx) {
         }
     }
 }
+#endif
 
 #if 0  // NSMBW: NHTTPStartup_Reentrant is not linked into NSMBW (was MKW-only)
 REGISTER_NATIVE_FUNCTION_AS(0x801D8D30, NHTTPStartup_Reentrant_HLE_801d8d30, "NHTTPStartup_Reentrant_HLE_801d8d30");

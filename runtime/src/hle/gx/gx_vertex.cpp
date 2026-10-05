@@ -290,10 +290,10 @@ extern "C" void GX__Begin_8016f0f0(uint32_t t, uint32_t vf, uint32_t nv) {
 PPC_NATIVE_OVERRIDE_VOID(801c5570, GX__Begin_8016f0f0, (uint32_t t, uint32_t vf, uint32_t nv), (t, vf, nv));
 
 extern "C" void GX__End_80044b30() { g_hleGxState.inBegin=false; GXEnd(); }
-PPC_NATIVE_OVERRIDE_VOID(80044b30, GX__End_80044b30, (), ());
+PPC_NATIVE_OVERRIDE_VOID(802a35b0, GX__End_80044b30, (), ());  // NSMBW out-of-line GXEnd copy #1 (blr)
 
 extern "C" void GX__End_80048c30() { GX__End_80044b30(); }
-PPC_NATIVE_OVERRIDE_VOID(80048c30, GX__End_80048c30, (), ());
+PPC_NATIVE_OVERRIDE_VOID(802a7c90, GX__End_80048c30, (), ());  // NSMBW out-of-line GXEnd copy #2 (blr)
 
 extern "C" void GX__DrawSphere_80172a30(uint32_t numMajor, uint32_t numMinor) {
     constexpr uint32_t kAttrCount = 26;

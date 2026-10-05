@@ -21,10 +21,10 @@ namespace {
 constexpr uint32_t kDefaultSampleRate = 32000u;
 constexpr uint32_t kAudioChannels = 2u;
 constexpr uint32_t kBytesPerSample = 2u;
-constexpr uint32_t kAIInitializedAddr = 0x80386448u;
-constexpr uint32_t kAICallbackBusyAddr = 0x8038644Cu;
-constexpr uint32_t kAICallbackStackSwitchAddr = 0x8038647Cu;
-constexpr uint32_t kAIDmaCallbackAddr = 0x80386480u;
+constexpr uint32_t kAIInitializedAddr = 0x8042A4B8u;          // __AI_init_flag (NSMBW)
+constexpr uint32_t kAICallbackBusyAddr = 0x8042A4BCu;         // __AID_Active (NSMBW)
+constexpr uint32_t kAICallbackStackSwitchAddr = 0x8042A4ECu;  // __CallbackStack (NSMBW)
+constexpr uint32_t kAIDmaCallbackAddr = 0x8042A4F0u;          // __AID_Callback (NSMBW)
 
 // Max completed 3 ms DMA blocks delivered per tick. Draining several at once catches up
 // backlog from a long frame without letting a large stall spiral into an unbounded loop.
@@ -248,7 +248,7 @@ PPC_NATIVE_OVERRIDE_VOID(8019f100, AIInitDMA_80123fcc, (uint32_t start_addr, uin
 
 
 
-// AIRegisterDMACallback stores the callback in the guest global at 0x80386480.
+// AIRegisterDMACallback stores the callback in the guest global __AID_Callback (0x8042A4F0 in NSMBW).
 // Returns the old callback pointer.
 extern "C" uint32_t AIRegisterDMACallback_80123f88(uint32_t callback)
 {
@@ -324,8 +324,10 @@ extern "C" void SoundPlayerSetVolume_800a35e0(uint32_t soundPlayer, float volume
     MusicAttenuation::SetSoundPlayerVolume(soundPlayer, volume);
 }
 
+#if 0  // NSMBW: music ducking hooks MKW nw4r::snd::SoundPlayer::SetVolume via an MKW sound-manager pointer; not ported to NSMBW yet
 PPC_NATIVE_OVERRIDE_VOID(800A35E0, SoundPlayerSetVolume_800a35e0,
               (uint32_t soundPlayer, float volume), (soundPlayer, volume));
+#endif
 
 extern "C" uint32_t DSPCheckMailToDSP_8015d3fc()
 {

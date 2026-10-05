@@ -18,20 +18,24 @@
 #include "runtime_log.h"
 #include "system_bridge.h"
 
-extern "C" void func_801A961C(CpuContext* ctx);
+extern "C" void func_801B4890(CpuContext* ctx);
+#if 0  // NSMBW: MKW StaticR.rel prolog
 extern "C" void func_8055531C(CpuContext* ctx);
+#endif
 
 extern "C" void OSInitAlarm_RecompModLateInit_801a961c(CpuContext* ctx) {
-    func_801A961C(ctx);
+    func_801B4890(ctx);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x801B4890, OSInitAlarm_RecompModLateInit_801a961c, "OSInitAlarm_RecompModLateInit_801a961c");
 
+#if 0  // NSMBW: MKW StaticR.rel prolog wrapper (Retro Rewind mod init); NSMBW has no StaticR
 extern "C" void StaticRProlog_RecompModInit_8055531c(CpuContext* ctx) {
     RecompMod::RunMemoryInitializers();
     func_8055531C(ctx);
     RecompMod::RunPostRelInitializers();
 }
+#endif
 
 #if 0  // NSMBW: StaticRProlog_RecompModInit is not linked into NSMBW (was MKW-only)
 REGISTER_NATIVE_FUNCTION_AS(0x8055531C, StaticRProlog_RecompModInit_8055531c, "StaticRProlog_RecompModInit_8055531c");
@@ -93,7 +97,7 @@ extern "C" uint32_t BTM_IsDeviceUp_HLE_8013a300(CpuContext* ctx)
 {
     // Force Bluetooth stack to "up" to avoid endless polling loops while we lack
     // real hardware bring-up.
-    constexpr uint32_t kBtmCbBase = 0x80336278u;
+    constexpr uint32_t kBtmCbBase = 0x803D1B78u;  // btm_cb (NSMBW); BTM_IsDeviceUp reads +0x64E == 5
     constexpr uint32_t kDevStateOffset = 0x64Eu;
     try {
         ::Memory::Write8(kBtmCbBase + kDevStateOffset, 5u);
@@ -202,15 +206,15 @@ extern "C" uint32_t __OSInitSTM_HLE_801ab848(CpuContext* ctx)
          return 0;
     }
 
-    // Offsets from disassembly: r13-0x62cc=STM_Initialized, r13-0x62c8=/dev/stm/immediate,
-    // r13-0x62c4=/dev/stm/eventhook.
+    // NSMBW offsets: r13-0x4F64=StmReady, r13-0x4F60=StmImDesc (/dev/stm/immediate),
+    // r13-0x4F5C=StmEhDesc (/dev/stm/eventhook).
     try {
         // Mark STM as initialized
-        ::Memory::Write32(r13 - 0x62ccu, 1);
+        ::Memory::Write32(r13 - 0x4f64u, 1);
 
         // Fake non-zero handles so callers' zero-checks pass.
-        ::Memory::Write32(r13 - 0x62c8u, 0x00535401); // "ST\x01"
-        ::Memory::Write32(r13 - 0x62c4u, 0x00535402); // "ST\x02"
+        ::Memory::Write32(r13 - 0x4f60u, 0x00535401); // "ST\x01"
+        ::Memory::Write32(r13 - 0x4f5cu, 0x00535402); // "ST\x02"
 
         // Default Power/Reset callback pointers are left unset; safe since we never fire
         // the STM hardware interrupt that would invoke them.

@@ -133,22 +133,21 @@ ViState g_vi;
 
 
 // Guest-side state addresses used by the SDK's VI globals.
-constexpr uint32_t kViInitializedFlagAddr   = 0x80386b38;
-constexpr uint32_t kViTvFormatAddr          = 0x80386ba8;
-constexpr uint32_t kViRenderWidthAddr       = 0x80350864;
-constexpr uint32_t kViRenderHeightAddr      = 0x80350866;
-constexpr uint32_t kViXfbWidthAddr          = 0x80350872;
-constexpr uint32_t kViXfbHeightAddr         = 0x8035087c;
-constexpr uint32_t kViRetraceCountAddr      = 0x80386be4; // matches VIWaitForRetrace/handler
-constexpr uint32_t kViTimingGuardAddr       = 0x80386b44;
-constexpr uint32_t kViPreRetraceCallback    = 0x80386bb8;
-constexpr uint32_t kViPostRetraceCallback   = 0x80386bb4;
-constexpr uint32_t kViNextFrameBufferAddr   = 0x80386ba0;
-constexpr uint32_t kViNextFrameBufferHwAddr = 0x80350890;
-constexpr uint32_t kViRetraceQueueAddr      = 0x80386bc0; // Thread queue for VIWaitForRetrace
+constexpr uint32_t kViInitializedFlagAddr   = 0x8042a7c0;  // IsInitialized (NSMBW)
+constexpr uint32_t kViTvFormatAddr          = 0x8042a830;  // CurrTvMode (NSMBW)
+constexpr uint32_t kViRenderWidthAddr       = 0x8038fae4;  // HorVer.DispSizeX (NSMBW)
+constexpr uint32_t kViRenderHeightAddr      = 0x8038fae6;  // HorVer.DispSizeY (NSMBW)
+constexpr uint32_t kViXfbWidthAddr          = 0x8038faf2;  // HorVer.FBSizeX (NSMBW)
+constexpr uint32_t kViXfbHeightAddr         = 0x8038fafc;  // HorVer+0x1C (PanSizeY) (NSMBW)
+constexpr uint32_t kViRetraceCountAddr      = 0x8042a86c;  // retraceCount (NSMBW); // matches VIWaitForRetrace/handler
+constexpr uint32_t kViTimingGuardAddr       = 0x8042a7cc;  // IsInitialized+0xC = __VIDimming_All_Clear in NSMBW (offset-matched; MKW name unverified)
+constexpr uint32_t kViPreRetraceCallback    = 0x8042a840;  // PreCB (NSMBW)
+constexpr uint32_t kViPostRetraceCallback   = 0x8042a83c;  // PostCB (NSMBW)
+constexpr uint32_t kViNextFrameBufferAddr   = 0x8042a828;  // CurrBufAddr in the SDK layout (offset-matched to MKW) (NSMBW)
+constexpr uint32_t kViNextFrameBufferHwAddr = 0x8038fb10;  // HorVer.bufAddr (NSMBW)
+constexpr uint32_t kViRetraceQueueAddr      = 0x8042a848;  // retraceQueue (NSMBW); // Thread queue for VIWaitForRetrace
 
-// EGG::BaseSystem::sSystem pointer - must be non-null before post-retrace callback is valid
-constexpr uint32_t kEggSSystemAddr = 0x80386F60;
+// (MKW gated the post-retrace callback on EGG::BaseSystem::sSystem at 0x80386F60; not used for NSMBW.)
 
 std::chrono::microseconds IntervalForFormat(uint32_t tvFormat) {
     // NTSC-ish defaults to 60 Hz; PAL uses 50 Hz.
@@ -339,12 +338,11 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
             InvokeIndirectCpu(preCb, ctx);
         }
         if (postCb) {
-            // Guard: only invoke callback if sSystem is initialized
-            // The callback dereferences sSystem which must be non-null
-            uint32_t sSystemPtr = Memory::Read32(kEggSSystemAddr);
-            if (sSystemPtr != 0) {
-                InvokeIndirectCpu(postCb, ctx);
-            }
+            // Mario Kart Wii gated this on EGG::BaseSystem::sSystem being non-null because its
+            // callback dereferenced it during early boot. NSMBW has no BaseSystem (its EGG is the
+            // older TSystem<...>), and none of its direct VISetPostRetraceCallback calls install a
+            // callback, so follow the SDK: call whatever callback is set.
+            InvokeIndirectCpu(postCb, ctx);
         }
     }
 

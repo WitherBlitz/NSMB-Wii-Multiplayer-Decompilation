@@ -241,6 +241,25 @@ extern "C" int32_t KPAD__Read_HLE(uint32_t chan, uint32_t statusPtr, uint32_t co
 PPC_NATIVE_OVERRIDE(801ED3A0, KPAD__Read_HLE, int32_t, (uint32_t chan, uint32_t statusPtr, uint32_t count),
          (chan, statusPtr, count));
 
+// KPADReadEx: KPADRead plus an optional s32* error out-parameter. In NSMBW both are thin wrappers
+// around KPADiRead, and the main input path (EGG::CoreControllerMgr, call at 0x802BCE0C) uses this
+// one, so it needs the same native or the remote would read as disconnected.
+extern "C" int32_t KPAD__ReadEx_HLE(uint32_t chan, uint32_t statusPtr, uint32_t count, uint32_t errPtr)
+{
+    constexpr int32_t kKpadReadErrNone = 0;
+    constexpr int32_t kKpadReadErrNoController = -2;
+    const int32_t read = KPAD__Read_HLE(chan, statusPtr, count);
+    if (errPtr != 0) {
+        try {
+            Memory::Write32(errPtr, static_cast<uint32_t>(read > 0 ? kKpadReadErrNone : kKpadReadErrNoController));
+        } catch (const Memory::AccessViolation&) {
+        }
+    }
+    return read;
+}
+PPC_NATIVE_OVERRIDE(801ED3B0, KPAD__ReadEx_HLE, int32_t,
+         (uint32_t chan, uint32_t statusPtr, uint32_t count, uint32_t errPtr), (chan, statusPtr, count, errPtr));
+
 // KPADGetUnifiedWpadStatus: the raw WPAD status behind KPADStatus. The game
 // reads the Classic Controller's buttons, sticks and triggers from here. The
 // SDK fills `count` entries with the channel's recent samples (the game asks for

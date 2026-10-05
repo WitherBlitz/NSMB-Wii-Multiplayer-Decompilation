@@ -749,7 +749,7 @@ extern "C" const char* DVDResolveHostPathForTest(const char* dvdPath)
 
 static void InitDvdWaitingQueues()
 {
-    constexpr uint32_t kQueueBase = 0x80343230;
+    constexpr uint32_t kQueueBase = 0x803958B0;  // WaitingQueue[4] (NSMBW)
     for (uint32_t i = 0; i < 4; ++i) {
         const uint32_t queue = kQueueBase + (i * 8);
         Memory::Write32(queue + 0, queue);
@@ -763,12 +763,12 @@ static void CompleteDvdCancelState()
 
     // These are the SDK DVD globals used by DVDCancelAll/__DVDPrepareReset.
     // The actual drive work is HLE'd, so complete pending cancel/reset waits.
-    Memory::Write32(0x80386664, 0); // Canceling
-    Memory::Write32(0x80386668, 0); // ResumeFromHere
-    Memory::Write32(0x80386670, 0); // PausingFlag
-    Memory::Write32(0x8038667C, 1); // CancelAllSync complete
-    Memory::Write32(0x803866A8, 1); // PrepareReset complete
-    Memory::Write32(0x803866F0, 0); // executing command block
+    Memory::Write32(0x8042A930, 0); // Canceling (NSMBW)
+    Memory::Write32(0x8042A934, 0); // ResumeFromHere (NSMBW)
+    Memory::Write32(0x8042A928, 0); // PausingFlag (NSMBW)
+    // (MKW also set CancelAllSyncComplete; NSMBW does not link DVDCancelAll, so it has no such flag.)
+    Memory::Write32(0x8042A964, 1); // Prepared: __DVDPrepareReset polls it (NSMBW)
+    Memory::Write32(0x8042A9B0, 0); // executing (NSMBW)
 }
 
 // 0x801CAD30 -> DVDInit
@@ -785,14 +785,14 @@ extern "C" void DVDInit_8015EA1C()
 
     // 1. Initialize Global Flags (Emulate OS state)
     // These addresses are standard OS globals for DVD context
-    Memory::Write8(0x80386724, 1);   // Contexts initialized
-    Memory::Write8(0x80386725, 1);   // LowInit called
-    Memory::Write32(0x80386720, 0);  // Current context index
-    Memory::Write8(0x803866a0, 1);   // DVDInit called flag
+    Memory::Write8(0x8042A9F4, 1);   // dvdContextsInited (NSMBW)
+    Memory::Write8(0x8042A9F5, 1);   // DVDLowInitCalled (NSMBW)
+    Memory::Write32(0x8042A9F0, 0);  // freeDvdContext (NSMBW)
+    Memory::Write8(0x8042A95C, 1);   // DVDInitialized (NSMBW)
     CompleteDvdCancelState();
 
     // 2. Initialize DVD Context structures (prevent crashes in callbacks)
-    constexpr uint32_t kContextBase = 0x803434e0;
+    constexpr uint32_t kContextBase = 0x80395BE0;  // dvdContexts[4] (NSMBW)
     constexpr uint32_t kMagicValue = 0xFEEBDAED;
     for (int i = 0; i < 4; i++) {
         uint32_t ctx = kContextBase + i * 0x20;

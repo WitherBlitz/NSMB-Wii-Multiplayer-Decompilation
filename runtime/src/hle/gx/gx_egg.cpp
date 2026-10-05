@@ -12,6 +12,7 @@ extern "C" void GX_HLE_FIFO_Write8(uint8_t val);
 
 // Use translated implementations for the main DrawGX setup routines.
 // Keep HLE fallbacks only for known missing alias entry points.
+#if 0  // NSMBW: HLE fallback for MKW map alias entries; NSMBW translates EGG::DrawGX::SetVtxState normally (MKW data addresses)
 static void EGG__DrawGX__SetVtxState_HLE(uint32_t state) {
     GX__ClearVtxDesc_8016dc34();
     auto setDesc = [](uint32_t attr, uint32_t type) { GX__SetVtxDesc_8016d3a4(attr, type); };
@@ -68,6 +69,7 @@ static void EGG__DrawGX__SetVtxState_HLE(uint32_t state) {
     default: break;
     }
 }
+#endif
 #if 0  // NSMBW: MKW switch-case label; its function is native in NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE_VOID(8021b344, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
 #endif
@@ -112,7 +114,9 @@ extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) 
 
     Memory::Write8(self + 0x74, 2);
 }
+#if 0  // NSMBW: NSMBW's EGG::LightTexture has no SetupTevFinish (MKW-only)
 PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2bc, (CpuContext* ctx), (ctx));
+#endif
 
 // ============================================================================
 // EGG::AsyncDisplay
@@ -123,4 +127,6 @@ extern "C" void EGG__AsyncDisplay__endRender_HLE_8020ff9c(CpuContext* ctx) {
     InvokeIndirectCpu(0x802BAED0u, ctx);
     InvokeIndirectCpu(0x801C51B0u, ctx);
 }
+#if 0  // NSMBW: MKW EGG::AsyncDisplay::endRender copied EFB->XFB; NSMBW's endRender (0x802BB820, 0x20 bytes) only toggles status bits, so the translated one runs
 PPC_NATIVE_OVERRIDE_VOID(802BB820, EGG__AsyncDisplay__endRender_HLE_8020ff9c, (CpuContext* ctx), (ctx));
+#endif

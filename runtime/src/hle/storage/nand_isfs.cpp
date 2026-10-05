@@ -833,15 +833,15 @@ static bool g_isfsInitialized = false;
 // load-bearing and must not be "tidied". Names come from the RVL IPC/ISFS
 // sources; only the naming changed here, never a value.
 namespace {
-constexpr uint32_t kIsfsFdSda1Offset = 29408u;              // __ISFS_fd
-constexpr uint32_t kIsfsPathSda1Offset = 29400u;            // __ISFS_path ("/dev/fs")
-constexpr uint32_t kIpcBufferLoSda1Offset = 25620u;         // IPC buffer window, low
-constexpr uint32_t kIpcBufferHiSda1Offset = 25616u;         // IPC buffer window, high
-constexpr uint32_t kIpcArenaLoSda1Offset = 25732u;          // __IPCArenaLo
-constexpr uint32_t kIpcArenaHiSda1Offset = 25728u;          // __IPCArenaHi
-constexpr uint32_t kIsfsHeapHandleSda1Offset = 25724u;      // ISFS heap handle
-constexpr uint32_t kIsfsHeapBaseSda1Offset = 25740u;        // ISFS heap base address
-constexpr uint32_t kIsfsHeapInitializedSda1Offset = 25744u; // ISFS heap created flag
+constexpr uint32_t kIsfsFdSda1Offset = 23824u;              // __fsFd (NSMBW 0x80429970)
+constexpr uint32_t kIsfsPathSda1Offset = 23816u;            // "/dev/fs" in .sdata (NSMBW 0x80429978)
+constexpr uint32_t kIpcBufferLoSda1Offset = 19156u;         // IPCBufferLo (NSMBW 0x8042ABAC)
+constexpr uint32_t kIpcBufferHiSda1Offset = 19152u;         // IPCBufferHi (NSMBW 0x8042ABB0)
+constexpr uint32_t kIpcArenaLoSda1Offset = 19108u;          // ISFS_OpenLib()::lo (NSMBW 0x8042ABDC)
+constexpr uint32_t kIpcArenaHiSda1Offset = 19104u;          // ISFS_OpenLib()::hi (NSMBW 0x8042ABE0)
+constexpr uint32_t kIsfsHeapHandleSda1Offset = 19100u;      // hId (NSMBW 0x8042ABE4)
+constexpr uint32_t kIsfsHeapBaseSda1Offset = 19116u;        // ISFS heap base (NSMBW 0x8042ABD4)
+constexpr uint32_t kIsfsHeapInitializedSda1Offset = 19120u; // __fsInitialized (NSMBW 0x8042ABD0)
 } // namespace
 
 static void WriteGuestString(uint32_t address, const char* value) {

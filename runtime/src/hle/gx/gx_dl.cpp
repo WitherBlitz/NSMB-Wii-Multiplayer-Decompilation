@@ -1500,7 +1500,7 @@ extern "C" void nw4r__lyt__detail__DrawQuad_800847c0(CpuContext* ctx) {
     EmitLytDrawQuad(ctx->gpr[3], ctx->gpr[4], static_cast<int32_t>(ctx->gpr[5]), ctx->gpr[6], colorPtr);
 }
 
-REGISTER_NATIVE_FUNCTION(0x800847C0, nw4r__lyt__detail__DrawQuad_800847c0);
+REGISTER_NATIVE_FUNCTION(0x802B6C80, nw4r__lyt__detail__DrawQuad_800847c0);  // NSMBW: DrawQuad(VEC2&, Size&, u8, VEC2[4]*, Color*)
 
 extern "C" void nw4r__lyt__detail__DrawQuad_80084d20(CpuContext* ctx) {
     uint32_t colors[4];
@@ -1518,4 +1518,4 @@ extern "C" void nw4r__lyt__detail__DrawQuad_80084d20(CpuContext* ctx) {
     EmitLytDrawQuad(ctx->gpr[3], ctx->gpr[4], static_cast<int32_t>(ctx->gpr[5]), ctx->gpr[6], colorPtr);
 }
 
-REGISTER_NATIVE_FUNCTION(0x80084D20, nw4r__lyt__detail__DrawQuad_80084d20);
+REGISTER_NATIVE_FUNCTION(0x802B71E0, nw4r__lyt__detail__DrawQuad_80084d20);  // NSMBW: DrawQuad(..., Color*, u8 alpha)

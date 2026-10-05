@@ -54,13 +54,13 @@ bool is_offscreen() noexcept;
 }
 
 // --- Constants ---
-constexpr uint32_t kGXDataPtrAddr = 0x803886C8;
-constexpr uint32_t kDlFifoAddr = 0x80344090;
-constexpr uint32_t kDlWritePtrAddr = 0x803440A4;
-constexpr uint32_t kDlCountAddr = 0x803440AC;
+constexpr uint32_t kGXDataPtrAddr = 0x8042E188;     // __GXData (NSMBW)
+constexpr uint32_t kDlFifoAddr = 0x803904D0;        // DisplayListFifo (NSMBW)
+constexpr uint32_t kDlWritePtrAddr = 0x803904E4;    // DisplayListFifo + 0x14
+constexpr uint32_t kDlCountAddr = 0x803904EC;       // DisplayListFifo + 0x1C
 constexpr uint32_t kDlWrapFlagOffset = 0x20;
 constexpr uint32_t kMaxTluts = 20;
-constexpr uint32_t kGxDrawDoneFlagAddr = 0x803867d8;
+constexpr uint32_t kGxDrawDoneFlagAddr = 0x8042A8E0;  // DrawDone (NSMBW)
 
 // --- External Declarations ---
 extern "C" void GXInitTexObjTlut(GXTexObj* obj, u32 tlut);

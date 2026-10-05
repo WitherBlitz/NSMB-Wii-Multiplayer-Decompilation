@@ -334,8 +334,8 @@ void SystemBridge::Initialize() {
     // These set up vtables and other critical infrastructure
     RT_LOG(RT_TAG_RUNTIME) << "Running static constructors for main DOL..." << std::endl;
 
-    const uint32_t dolCtorStart = 0x80244DE0;
-    const uint32_t dolCtorEnd = 0x80244EA0;
+    const uint32_t dolCtorStart = 0x802ED9E0;  // NSMBW .ctors (data2): 181 entries + terminator
+    const uint32_t dolCtorEnd = 0x802EDCC0;
 
     int dolCount = 0;
     for (uint32_t addr = dolCtorStart; addr < dolCtorEnd; addr += 4) {
@@ -370,7 +370,10 @@ void SystemBridge::Initialize() {
     }
     RT_LOG(RT_TAG_RUNTIME) << "Executed " << dolCount << " main DOL static constructors." << std::endl;
 
-    // StaticR.rel ctors must be run manually since we aren't using OSLink
+    // Mario Kart Wii ran StaticR.rel's .ctors here because its REL was never OSLinked at runtime.
+    // NSMBW's four boot RELs are loaded, linked and prologued by the game itself (each module's
+    // _prolog runs its own .ctors), so there is nothing to construct ahead of the entry point.
+#if 0  // NSMBW: MKW StaticR.rel constructor pass (0x8088f400-0x8088f704)
     RT_LOG(RT_TAG_RUNTIME) << "Running static constructors for StaticR.rel..." << std::endl;
 
     // Define range for StaticR.rel .ctors
@@ -408,8 +411,9 @@ void SystemBridge::Initialize() {
             g_sehJumpTarget = nullptr;
         }
     }
-    g_suppressSehReporting = false;
     RT_LOG(RT_TAG_RUNTIME) << "Executed " << count << " static constructors." << std::endl;
+#endif
+    g_suppressSehReporting = false;
 }
 
 void SystemBridge::WriteGuestMemorySnapshot(std::ostream& os, const std::filesystem::path& mem1Path) {
@@ -484,15 +488,15 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     };
 
     std::vector<SeedEntry> entries;
-    constexpr uint32_t kMem1ArenaLoDefault = 0x80399180u;
-    uint32_t mem1ArenaHiDefault = 0x817f0520u;
+    constexpr uint32_t kMem1ArenaLoDefault = 0x8043FC40u;  // NSMBW __ArenaLo (stack top, see OSInit)
+    uint32_t mem1ArenaHiDefault = 0x817F74C0u;  // MEM1 end - NSMBW FST (0x8B2C bytes, 32-aligned); verified via REL load addresses at boot
     constexpr uint32_t kBusClockHz =
         static_cast<uint32_t>(TimeBaseContract::kBusClockHz);
     constexpr uint32_t kCpuClockHz = kBusClockHz * 3u;
-    // Mario Kart Wii boots under IOS36. These are the IOS kernel values that
-    // Dolphin exposes in low memory for IOS36 (VersionInfo.cpp). SDK helpers
+    // NSMBW (SMNE01 rev 1) boots under IOS53 (TMD system version 0x35). These are the IOS kernel values that
+    // Dolphin exposes in low memory for IOS53 (VersionInfo.cpp: v5663). SDK helpers
     // read them through the 0xC0000000 MEM1 alias.
-    constexpr uint32_t kIos36Version = 0x00240E18u;
+    constexpr uint32_t kIos36Version = 0x0035161Fu;  // IOS53 v5663 (name kept from MKW)
     constexpr uint32_t kIos36Date = 0x00030110u;
 
     constexpr uint32_t kMem2LoFloor = 0x90000800u;
@@ -508,10 +512,10 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     // Retro Rewind reads the region byte directly from here while building its
     // Retro-WFC payload URL, and OSGetAppGamename reads the app code mirrors
     // at 0x80003180/0x80003194 while building NAS auth fields.
-    entries.push_back({0x80000000u, 0x524D4350u, "Disc game code"}); // RMCP
-    entries.push_back({0x80000004u, 0x30310100u, "Disc maker/id"});  // 01 + disc 1
-    entries.push_back({0x80003180u, 0x524D4350u, "OS app game code"}); // RMCP
-    entries.push_back({0x80003194u, 0x524D4350u, "OS app gamename"});  // RMCP
+    entries.push_back({0x80000000u, 0x534D4E45u, "Disc game code"}); // SMNE
+    entries.push_back({0x80000004u, 0x30310001u, "Disc maker/id"});  // "01", disc 0, version 1 (boot.bin)
+    entries.push_back({0x80003180u, 0x534D4E45u, "OS app game code"}); // SMNE
+    entries.push_back({0x80003194u, 0x534D4E45u, "OS app gamename"});  // SMNE
     if (RuntimeProduct::IsRetroRewind()) {
         entries.push_back({0x800017D8u, 0x00000001u, "Retro Rewind recomp runtime marker", true});
     }

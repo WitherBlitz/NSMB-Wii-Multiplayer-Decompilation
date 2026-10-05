@@ -82,11 +82,11 @@ extern "C" int32_t NANDInit_HLE(void) {
     // Initialize ISFS
     ISFS_OpenLib_Initialize(&GetPersistentCpuContext());
 
-    // NANDHomeDir is at 0x80346D20 (from ESP_GetDataDir output)
-    WriteGuestNandPath(0x80346D20, CurrentNandDataDir());
+    // NAND home directory buffer: s_homeDir (NSMBW 0x80395DE0, 0x40 bytes)
+    WriteGuestNandPath(0x80395DE0, CurrentNandDataDir());
 
-    // Mark NAND as initialized (0x80386848 = 2)
-    Memory::Write32(0x80386848, 2);
+    // Mark NAND as initialized: s_libState = 2 (NSMBW 0x8042AA40)
+    Memory::Write32(0x8042AA40, 2);
 
     return NAND_RESULT_OK;
 }

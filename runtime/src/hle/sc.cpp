@@ -74,12 +74,13 @@ PPC_NATIVE_OVERRIDE(801DD2B0, SCGetEuRgb60Mode_HLE, uint32_t, (), ());
 
 extern "C" uint32_t SCGetProductArea_HLE()
 {
-    return LookupProductRegion(0x8029CEB0u, 5, 13,
+    return LookupProductRegion(0x80343A08u, 5, 13,  // SC area table {code, "JPN"...} (NSMBW)
                                RuntimeConsoleIdentity::Current().area);
 }
 
 PPC_NATIVE_OVERRIDE(801DD860, SCGetProductArea_HLE, uint32_t, (), ());
 
+#if 0  // NSMBW: SCGetProductCode is not linked into NSMBW; this wrote MKW's SC CODE buffer
 extern "C" uint32_t SCGetProductCode_HLE()
 {
     // Original PAL SC storage for the six-byte CODE value.
@@ -93,6 +94,7 @@ extern "C" uint32_t SCGetProductCode_HLE()
                 productCode.c_str(), size);
     return kProductCodeAddress;
 }
+#endif
 
 #if 0  // NSMBW: SCGetProductCode is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(801B2424, SCGetProductCode_HLE, uint32_t, (), ());
@@ -112,7 +114,7 @@ PPC_NATIVE_OVERRIDE(801B2460, SCGetProductSN_HLE, uint32_t, (uint32_t serialAddr
 
 extern "C" uint32_t SCGetProductGameRegion_HLE()
 {
-    return LookupProductRegion(0x8029CEF8u, 4, 4,
+    return LookupProductRegion(0x80343A50u, 4, 4,  // SC game-region table {code, "JP"...} (NSMBW)
                                RuntimeConsoleIdentity::Current().gameRegion);
 }
 
