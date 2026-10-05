@@ -491,6 +491,12 @@ PPC_NATIVE_OVERRIDE(8019CB74, NANDSafeOpen_HLE, int32_t,
     (uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode, uint32_t tempBufferPtr, uint32_t tempBufferSize),
     (pathPtr, fileInfoPtr, mode, tempBufferPtr, tempBufferSize));
 #endif
+// NSMBW's newer SDK writes saves through NANDSimpleSafeOpen(path, info, accType, buf, length) - a thin
+// wrapper (r8=0, r9=1) around the internal nandSafeOpen. Same arguments and meaning as NANDSafeOpen:
+// write through a scratch copy, commit on close.
+PPC_NATIVE_OVERRIDE(801D9950, NANDSafeOpen_HLE, int32_t,
+    (uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode, uint32_t tempBufferPtr, uint32_t tempBufferSize),
+    (pathPtr, fileInfoPtr, mode, tempBufferPtr, tempBufferSize));
 
 extern "C" int32_t NANDSafeClose_HLE(uint32_t fileInfoPtr) {
     if (!fileInfoPtr) {
@@ -531,3 +537,6 @@ extern "C" int32_t NANDSafeClose_HLE(uint32_t fileInfoPtr) {
 #if 0  // NSMBW: NANDSafeClose is not linked into NSMBW (was MKW-only)
 PPC_NATIVE_OVERRIDE(8019CF28, NANDSafeClose_HLE, int32_t, (uint32_t fileInfoPtr), (fileInfoPtr));
 #endif
+// NSMBW: NANDSimpleSafeClose(info) - wrapper (r4=1) around the internal nandSafeClose; commits the
+// scratch copy opened by NANDSimpleSafeOpen above.
+PPC_NATIVE_OVERRIDE(801D9D10, NANDSafeClose_HLE, int32_t, (uint32_t fileInfoPtr), (fileInfoPtr));

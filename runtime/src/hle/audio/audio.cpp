@@ -68,6 +68,29 @@ uint32_t EncodeAIDmaLengthRegister(uint32_t length) {
     return length & 0x000fffe0u;
 }
 
+// NSMBW bring-up: the loudest sample of the AI output, reported every ~15 s of 32 kHz stereo for the
+// first minute, so a game that runs silently shows up in the log of an automated run.
+void MeterAudioBlock(const uint8_t* src, uint32_t bytes) {
+    constexpr uint64_t kReportBytes = 32000ull * 2 * kBytesPerSample * 15;  // frames * channels
+    static uint64_t s_bytes = 0;
+    static int s_peak = 0;
+    static int s_reports = 0;
+    if (s_reports >= 4) {
+        return;
+    }
+    for (uint32_t i = 0; i + 1 < bytes; i += 2) {
+        const int value = static_cast<int16_t>(static_cast<uint16_t>((src[i] << 8) | src[i + 1]));
+        s_peak = std::max(s_peak, value < 0 ? -value : value);
+    }
+    s_bytes += bytes;
+    if (s_bytes >= kReportBytes) {
+        RT_LOGF(RT_TAG_AUDIO, "[meter] output peak %d of 32767 over the last ~15 s\n", s_peak);
+        s_bytes = 0;
+        s_peak = 0;
+        ++s_reports;
+    }
+}
+
 bool PushAudioBlock(uint32_t startAddr, uint32_t length) {
     if (startAddr == 0 || length == 0) {
         return false;
@@ -81,6 +104,7 @@ bool PushAudioBlock(uint32_t startAddr, uint32_t length) {
     }
 
     if (src) {
+        MeterAudioBlock(src, bytes);
         return AudioBackend::Instance().PushWiiAiSamplesBE16(src, bytes);
     }
 

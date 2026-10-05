@@ -94,10 +94,17 @@ for f in list((RT / "src").rglob("*")) + list((RT / "include").rglob("*")):
         for m in HOOK.finditer(line):
             natives.add(int(m.group(1), 16))
 
+# GX functions that touch only guest memory or do pure math, so running them translated is safe even
+# though Mario Kart never exercised them: no GPU registers, no Aurora state.
+SAFE_TRANSLATED = {"GXSetCurrentGXThread", "GXSetBreakPtCallback", "GXProject", "GXInitFogAdjTable"}
+
 stubs, kept_translated, foreign = [], [], []
 for a in lib:
     n = names.get(a)
     if a in natives:
+        continue
+    if n in SAFE_TRANSLATED:
+        kept_translated.append((a, n))
         continue
     if n and not re.match(r"(__)?GX[A-Z_]", n):
         foreign.append((a, n))  # a non-GX function inside the range (e.g. libc helpers): leave it

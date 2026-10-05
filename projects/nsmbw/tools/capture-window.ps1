@@ -3,8 +3,11 @@
 [CmdletBinding()]
 param(
     [int[]]$AtSeconds = @(20),
-    [string]$Name = 'shot'
+    [string]$Name = 'shot',
+    # Scripted Wii Remote input for the run (runtime reads NSMBW_INPUT_SCRIPT), e.g. '6000:A:200'.
+    [string]$InputScript = ''
 )
+if ($InputScript) { $env:NSMBW_INPUT_SCRIPT = $InputScript } else { Remove-Item Env:NSMBW_INPUT_SCRIPT -ErrorAction SilentlyContinue }
 
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
@@ -21,6 +24,10 @@ public static class Win {
 
 $buildDir = 'E:\NSMBWPort\wiicompiled\native-build'
 $logDir = 'E:\NSMBWPort\build-nsmbw\logs'
+if (-not (Test-Path -LiteralPath (Join-Path $buildDir 'WiiCompiled.exe'))) {
+    Write-Error 'WiiCompiled.exe is missing (did the last link fail?)'
+    return
+}
 Get-Process WiiCompiled -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'E:\NSMBWPort\*' } |
     ForEach-Object { Stop-Process -Id $_.Id -Force }
 $p = Start-Process -FilePath (Join-Path $buildDir 'WiiCompiled.exe') -WorkingDirectory $buildDir -PassThru `

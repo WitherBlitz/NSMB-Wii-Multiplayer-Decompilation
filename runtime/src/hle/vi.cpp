@@ -336,6 +336,41 @@ void LogGuestModulesOnce() {
     }
 }
 
+// NSMBW: log every scene switch (boot, title, world map, stage, ...) with the game's own profile name,
+// so automated bring-up runs show how far the game got without screenshots. dScene_c::m_nextScene and
+// m_nowScene are adjacent halfwords at 0x80428730; dProf_getName reads names from a pointer table.
+void LogSceneChanges() {
+    static uint32_t s_lastScene = 0xFFFFFFFFu;
+    uint32_t sceneWord = 0;
+    if (!Memory::TryRead32(0x80428730u, sceneWord)) {
+        return;
+    }
+    const uint32_t now = sceneWord & 0xFFFFu;
+    if (now == s_lastScene) {
+        return;
+    }
+    s_lastScene = now;
+    char name[48] = "?";
+    uint32_t namePtr = 0;
+    if (now < 0x300u && Memory::TryRead32(0x80320840u + now * 4u, namePtr) && namePtr != 0) {
+        size_t length = 0;
+        for (uint32_t addr = namePtr; length + 1 < sizeof(name); ++addr) {
+            uint32_t word = 0;
+            if (!Memory::TryRead32(addr & ~3u, word)) {
+                break;
+            }
+            const char c = static_cast<char>((word >> (24 - 8 * (addr & 3u))) & 0xFFu);
+            if (c == '\0') {
+                break;
+            }
+            name[length++] = c;
+        }
+        name[length] = '\0';
+    }
+    RT_LOGF(RT_TAG_VI, "scene -> 0x%03X %s (frame %u)\n", now, name,
+            s_presentedXfbFrames.load(std::memory_order_relaxed));
+}
+
 void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool serviceAurora) {
     // Prevent re-entry - this can happen if OSWakeupThread triggers SelectThread
     // which goes idle and calls ProcessTimerEvents again
@@ -344,7 +379,8 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
     }
     StartStallWatchdogOnce();
     LogGuestModulesOnce();
-    
+    LogSceneChanges();
+
     uint32_t preCb = 0;
     uint32_t postCb = 0;
     uint32_t retraceValue = 0;
