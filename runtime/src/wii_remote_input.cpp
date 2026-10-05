@@ -2,6 +2,7 @@
 
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "virtual_remote.h"
 
 #include <dolphin/pad.h>
 #include <SDL3/SDL_gamepad.h>
@@ -18,8 +19,16 @@
 #include <fstream>
 #include <string>
 #include <unordered_set>
+#include <cstdlib>
+#include <vector>
 
 namespace WiiRemoteInput {
+
+// The real Wii controller on `chan` (live, or remembered through an extension swap), leaving out the
+// keyboard and gamepad remotes VirtualRemote adds. Defined next to EffectiveKind.
+static Kind RealKind(uint32_t chan);
+static bool IsKpadKind(Kind kind);
+
 namespace {
 
 // Dolphin's continuous scanning polls Bluetooth about once a second; SDL's
@@ -56,6 +65,104 @@ enum RawWiiButton : int {
 constexpr uint32_t kWpadLeft = 0x0001, kWpadRight = 0x0002, kWpadDown = 0x0004, kWpadUp = 0x0008,
                    kWpadPlus = 0x0010, kWpadTwo = 0x0100, kWpadOne = 0x0200, kWpadB = 0x0400, kWpadA = 0x0800,
                    kWpadMinus = 0x1000, kWpadZ = 0x2000, kWpadC = 0x4000, kWpadHome = 0x8000;
+
+// NSMBW bring-up: scripted Wii Remote input for automated runs without a remote.
+// NSMBW_INPUT_SCRIPT="5000:A:200,9000:A+TWO:150" holds the named buttons on channel 1 for <duration>
+// ms (default 150) starting <time> ms after the game's first input read. While the variable is set,
+// channel 1 reports a connected Wii Remote at rest. Buttons: A B ONE TWO PLUS MINUS HOME UP DOWN
+// LEFT RIGHT (also 1 and 2).
+struct ScriptEvent {
+    uint64_t startMs = 0;
+    uint64_t endMs = 0;
+    uint32_t bits = 0;
+    std::string text;
+};
+
+struct InputScript {
+    bool active = false;
+    std::vector<ScriptEvent> events;
+};
+
+uint32_t ScriptButtonBit(const std::string& name) {
+    if (name == "A") return kWpadA;
+    if (name == "B") return kWpadB;
+    if (name == "ONE" || name == "1") return kWpadOne;
+    if (name == "TWO" || name == "2") return kWpadTwo;
+    if (name == "PLUS") return kWpadPlus;
+    if (name == "MINUS") return kWpadMinus;
+    if (name == "HOME") return kWpadHome;
+    if (name == "UP") return kWpadUp;
+    if (name == "DOWN") return kWpadDown;
+    if (name == "LEFT") return kWpadLeft;
+    if (name == "RIGHT") return kWpadRight;
+    return 0;
+}
+
+const InputScript& Script() {
+    static const InputScript script = [] {
+        InputScript parsed;
+        const char* text = std::getenv("NSMBW_INPUT_SCRIPT");
+        if (text == nullptr || *text == '\0') {
+            return parsed;
+        }
+        parsed.active = true;
+        const std::string all(text);
+        size_t pos = 0;
+        while (pos < all.size()) {
+            const size_t comma = all.find(',', pos);
+            const std::string item = all.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+            const size_t c1 = item.find(':');
+            if (c1 != std::string::npos) {
+                const size_t c2 = item.find(':', c1 + 1);
+                ScriptEvent event;
+                event.text = item;
+                event.startMs = std::strtoull(item.substr(0, c1).c_str(), nullptr, 10);
+                const std::string buttons = item.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
+                const uint64_t duration = c2 == std::string::npos ? 150 : std::strtoull(item.substr(c2 + 1).c_str(), nullptr, 10);
+                event.endMs = event.startMs + duration;
+                size_t b = 0;
+                while (b <= buttons.size()) {
+                    const size_t plus = buttons.find('+', b);
+                    event.bits |= ScriptButtonBit(buttons.substr(b, plus == std::string::npos ? std::string::npos : plus - b));
+                    if (plus == std::string::npos) break;
+                    b = plus + 1;
+                }
+                if (event.bits != 0) {
+                    parsed.events.push_back(event);
+                }
+            }
+            if (comma == std::string::npos) break;
+            pos = comma + 1;
+        }
+        RT_LOGF(RT_TAG_RUNTIME, "scripted Wii Remote input on channel 1: %zu event(s)\n", parsed.events.size());
+        return parsed;
+    }();
+    return script;
+}
+
+bool ScriptedSample(uint32_t chan, KpadSample& sample) {
+    const InputScript& script = Script();
+    if (!script.active || chan != 0) {
+        return false;
+    }
+    static const uint64_t originMs = SDL_GetTicks();
+    static std::vector<bool> announced(script.events.size(), false);
+    const uint64_t now = SDL_GetTicks() - originMs;
+    sample = {};
+    sample.acc[1] = -1.0f;  // at rest, KPAD frame
+    for (size_t i = 0; i < script.events.size(); ++i) {
+        const ScriptEvent& event = script.events[i];
+        if (now >= event.startMs && now < event.endMs) {
+            sample.hold |= event.bits;
+            if (!announced[i]) {
+                announced[i] = true;
+                RT_LOGF(RT_TAG_RUNTIME, "scripted input at %llu ms: %s\n", static_cast<unsigned long long>(now),
+                        event.text.c_str());
+            }
+        }
+    }
+    return true;
+}
 
 // WPAD_CL_BUTTON_* bits (WPADCLStatus.clButton / KPADStatus.ex_status.cl.hold):
 // the Classic Controller's two button bytes, inverted, high byte first.
@@ -289,7 +396,7 @@ void StepAccelCalibration() {
         return;
     }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(g_calibration.chan));
-    if (gamepad == nullptr || !IsRemoteChannel(g_calibration.chan)) {
+    if (gamepad == nullptr || !IsKpadKind(RealKind(g_calibration.chan))) {
         FinishAccelCalibration("Cancelled: the Wii Remote went away.");
         return;
     }
@@ -462,7 +569,7 @@ void Poll() {
     StepAccelCalibration();
     // Remember what each port had, so EffectiveKind can bridge a swap.
     for (uint32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
-        (void)EffectiveKind(port);
+        (void)RealKind(port);
     }
     if (!g_wiiDriverEnabled) {
         return;
@@ -557,7 +664,7 @@ static bool IsKpadKind(Kind kind) {
 // Live kind of the port, or the remembered one while a swap is in flight.
 // Called from the guest thread only (PADRead, KPADRead, WPADProbe and the
 // overlay's Draw all run there), so the port memory needs no locking.
-Kind EffectiveKind(uint32_t chan) {
+static Kind RealKind(uint32_t chan) {
     if (chan >= PAD_MAX_CONTROLLERS) return Kind::NotWii;
     PortMemory& memory = g_ports[chan];
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));
@@ -579,15 +686,25 @@ Kind EffectiveKind(uint32_t chan) {
     return Kind::NotWii;
 }
 
+// The real Wii controller on the port; otherwise, for NSMBW, a bare remote when the keyboard or a
+// gamepad stands in for one there (VirtualRemote).
+Kind EffectiveKind(uint32_t chan) {
+    if (chan >= PAD_MAX_CONTROLLERS) return Kind::NotWii;
+    if (chan == 0 && Script().active) return Kind::Remote;  // NSMBW bring-up scripted remote
+    const Kind real = RealKind(chan);
+    if (IsKpadKind(real)) return real;
+    return VirtualRemote::Present(chan) ? Kind::Remote : real;
+}
+
 // True when the game reads the port through KPAD (live or bridging a swap).
 bool IsRemoteChannel(uint32_t chan) {
     return IsKpadKind(EffectiveKind(chan));
 }
 
-// Marks KPAD-served ports as "no controller" in the GameCube pad statuses.
+// Marks ports served by a real remote as "no controller" in the GameCube pad statuses.
 void HideRemotesFromPad(PADStatus* statuses, uint32_t count) {
     for (uint32_t port = 0; port < count && port < PAD_MAX_CONTROLLERS; ++port) {
-        if (IsRemoteChannel(port)) {
+        if (IsKpadKind(RealKind(port))) {
             statuses[port] = {};
             statuses[port].err = PAD_ERR_NO_CONTROLLER;
         }
@@ -618,12 +735,15 @@ bool ReadKpadSample(uint32_t chan, KpadSample& sample) {
     if (chan >= PAD_MAX_CONTROLLERS) {
         return false;
     }
+    if (ScriptedSample(chan, sample)) {
+        return true;
+    }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));
     const Kind kind = gamepad != nullptr ? KindForName(SDL_GetGamepadName(gamepad)) : Kind::NotWii;
     if (!IsKpadKind(kind)) {
-        const Kind remembered = EffectiveKind(chan);
+        const Kind remembered = RealKind(chan);
         if (!IsKpadKind(remembered)) {
-            return false;
+            return VirtualRemote::Sample(chan, sample);
         }
         FillGraceSample(chan, remembered, sample);
         return true;
@@ -730,7 +850,7 @@ bool ReadKpadSample(uint32_t chan, KpadSample& sample) {
 
 // Corrected SDL sample and KPAD vector of the remote on a port, for the overlay.
 bool ReadAccelDebug(uint32_t chan, float sdlG[3], float kpadAcc[3]) {
-    if (!IsRemoteChannel(chan)) {
+    if (!IsKpadKind(RealKind(chan))) {
         return false;
     }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));
@@ -747,7 +867,7 @@ bool ReadAccelDebug(uint32_t chan, float sdlG[3], float kpadAcc[3]) {
 
 // Begins collecting rest samples from the remote on `chan`.
 void StartAccelCalibration(uint32_t chan) {
-    if (!IsRemoteChannel(chan)) {
+    if (!IsKpadKind(RealKind(chan))) {
         FinishAccelCalibration("No Wii Remote on this port.");
         return;
     }

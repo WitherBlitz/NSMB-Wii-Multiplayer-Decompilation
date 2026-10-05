@@ -53,7 +53,39 @@ struct ChannelState {
     uint32_t prevClHold = 0;
     float prevAcc[3] = {0.0f, -1.0f, 0.0f};
     float prevFsAcc[3] = {0.0f, -1.0f, 0.0f};
+    float accVertical[2] = {1.0f, 0.0f};  // KPADStatus.acc_vertical, level at rest
 };
+
+// KPAD runs its accelerometer filters once per report from the remote, about 200 a second, so
+// one 60 Hz read stands for about three of them.
+constexpr int kReportsPerRead = 3;
+
+// KPAD's calc_acc_vertical (0x801EB030 in NSMBW): the remote's attitude in the vertical plane,
+// (|acc.xy|, -acc.z) / |acc|, eased toward each report with weight kp_acc_horizon_pw (0.05) times
+// w^2, where w is |acc| folded around 1 g; readings of 2 g or more (swings) are ignored. Kept at
+// unit length. New Super Mario Bros. Wii reads its y as the tilt of a sideways remote.
+void UpdateAccVertical(ChannelState& state, const float* acc) {
+    constexpr float kHorizonPower = 0.05f;
+    const float xy2 = acc[0] * acc[0] + acc[1] * acc[1];
+    const float length = std::sqrt(xy2 + acc[2] * acc[2]);
+    if (length == 0.0f || length >= 2.0f) {
+        return;
+    }
+    const float targetX = std::sqrt(xy2) / length;
+    const float targetY = -acc[2] / length;
+    const float weight = length > 1.0f ? 2.0f - length : length;
+    const float k = weight * weight * kHorizonPower;
+    for (int report = 0; report < kReportsPerRead; ++report) {
+        const float x = state.accVertical[0] + k * (targetX - state.accVertical[0]);
+        const float y = state.accVertical[1] + k * (targetY - state.accVertical[1]);
+        const float norm = std::sqrt(x * x + y * y);
+        if (norm == 0.0f) {
+            return;
+        }
+        state.accVertical[0] = x / norm;
+        state.accVertical[1] = y / norm;
+    }
+}
 
 std::array<ChannelState, 4> g_channels{};
 
@@ -108,9 +140,13 @@ int32_t WriteStatus(uint32_t chan, uint32_t addr, const WiiRemoteInput::KpadSamp
     Memory::WriteFloat32(addr + kAccSpeed, Distance(sample->acc, state.prevAcc));
     for (int i = 0; i < 3; ++i) state.prevAcc[i] = sample->acc[i];
 
-    // No IR pointer: pos .. acc_vertical zeroed and dpd_valid_fg clear, which
-    // the game treats as "pointing away from the screen".
-    WriteZeroFloats(addr + kPos, (kAccVertical + 8 - kPos) / 4);
+    // No IR pointer: pos .. dist_speed zeroed and dpd_valid_fg clear, which
+    // the game treats as "pointing away from the screen". acc_vertical comes
+    // from the accelerometer alone, as on the console.
+    WriteZeroFloats(addr + kPos, (kAccVertical - kPos) / 4);
+    UpdateAccVertical(state, sample->acc);
+    Memory::WriteFloat32(addr + kAccVertical, state.accVertical[0]);
+    Memory::WriteFloat32(addr + kAccVertical + 4, state.accVertical[1]);
     Memory::Write8(addr + kDpdValidFg, 0);
 
     const uint8_t devType = sample->hasClassic ? kDevClassic : sample->hasNunchuk ? kDevFreestyle : kDevCore;
