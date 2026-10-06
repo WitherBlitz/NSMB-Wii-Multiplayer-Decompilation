@@ -791,6 +791,10 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
       .cachePath = g_config.cachePath,
       .window = window::get_sdl_window(),
       .windowSize = size,
+#ifdef AURORA_ENABLE_GX
+      .gpuName = webgpu::adapter_name(),
+      .gpuCompatActive = webgpu::g_safeVertexFetch,
+#endif
   };
 }
 

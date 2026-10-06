@@ -11,6 +11,8 @@ param(
 $adb = 'C:\Users\Wither\AppData\Local\Android\Sdk\platform-tools\adb.exe'
 $logs = 'E:\NSMBWPort\build-nsmbw\logs'
 $ErrorActionPreference = 'Continue'
+# A game left running from an earlier start would keep the launcher (and its PLAY button) away.
+& $adb shell am force-stop com.wither.nsmbw
 & $adb logcat -c
 & $adb shell am start -n com.wither.nsmbw/.LauncherActivity 2>&1 | Out-Null
 Start-Sleep -Seconds 2

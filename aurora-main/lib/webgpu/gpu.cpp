@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <cctype>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -67,6 +69,9 @@ wgpu::Instance g_instance;
 static wgpu::AdapterInfo g_adapterInfo;
 static wgpu::SurfaceCapabilities g_surfaceCapabilities;
 bool g_bcTexturesSupported;
+bool g_safeVertexFetch = false;
+uint32_t g_shaderDebug = 0;
+static std::string g_adapterName;
 // Written by Dawn's device-loss callback and consumed at ordered frame boundaries. Keep the
 // callback free of logging, allocation, teardown and renderer state mutation.
 static std::atomic_bool g_deviceLost{false};
@@ -77,6 +82,102 @@ static std::array<char, 256> g_deviceLostMessage{};
 // Errors raised before initialize() completes must not be fatal: the backend fallback loop retries
 // the next backend, and a broken ICD can raise uncaptured errors mid-probe.
 static std::atomic_bool g_initialized{false};
+
+// AURORA_GFX_FLAGS: comma-separated graphics debugging switches, read at device creation. On Android
+// the runtime fills it from `adb shell setprop debug.nsmbw.gfx ...`.
+//   validate   keep Dawn's validation and log its errors instead of aborting on them
+//   robust     keep Dawn's bounds checks on buffer and texture access
+//   nobc       do not enable BC texture compression
+//   nomono     do not use one Vulkan pipeline cache for all pipelines
+//   safefetch / nosafefetch   force the GPU compatibility vertex fetch on or off
+//   notex      every texture samples as grey (is it geometry or texturing?)
+//   uvvis      texture samples show their coordinates instead
+//   dumpwgsl   write every generated shader to <cache>/wgsl
+//   +name      enable the Dawn toggle `name`; -name disables it
+static std::vector<std::string> g_gfxFlags;
+static std::atomic_bool g_logValidationErrors{false};
+
+static bool gfx_flag(std::string_view flag) {
+  return std::find(g_gfxFlags.begin(), g_gfxFlags.end(), flag) != g_gfxFlags.end();
+}
+
+static void load_gfx_flags() {
+  g_gfxFlags.clear();
+  const char* env = std::getenv("AURORA_GFX_FLAGS");
+  if (env == nullptr) {
+    return;
+  }
+  std::string_view rest{env};
+  while (!rest.empty()) {
+    const auto comma = rest.find(',');
+    auto item = rest.substr(0, comma);
+    while (!item.empty() && item.front() == ' ') item.remove_prefix(1);
+    while (!item.empty() && item.back() == ' ') item.remove_suffix(1);
+    if (!item.empty()) {
+      g_gfxFlags.emplace_back(item);
+    }
+    rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+  }
+}
+
+static bool contains_ignore_case(std::string_view haystack, std::string_view needle) {
+  if (needle.size() > haystack.size()) {
+    return false;
+  }
+  for (size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
+    size_t j = 0;
+    while (j < needle.size() && std::tolower(static_cast<unsigned char>(haystack[i + j])) ==
+                                    std::tolower(static_cast<unsigned char>(needle[j]))) {
+      ++j;
+    }
+    if (j == needle.size()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// GPU driver workarounds for the adapter in use. Qualcomm's Adreno drivers (phones, Quest headsets and
+// Snapdragon laptops alike) miscompile aurora's vertex pulling on some driver versions - Adreno 840
+// always, some 6xx/7xx too - and every Android GPU runs a vendor driver that games rarely exercise
+// this way, so phones get the safe path whatever their GPU. Its cost is a bounds check per load.
+static void choose_gpu_compat() {
+  const auto text = [](const wgpu::StringView& value) {
+    return value.IsUndefined() ? std::string_view{} : std::string_view{value};
+  };
+  const bool qualcomm = contains_ignore_case(text(g_adapterInfo.vendor), "qualcomm") ||
+                        contains_ignore_case(text(g_adapterInfo.device), "adreno") ||
+                        contains_ignore_case(text(g_adapterInfo.description), "qualcomm") ||
+                        g_adapterInfo.vendorID == 0x5143;
+#if defined(__ANDROID__)
+  constexpr bool mobile = true;
+#else
+  constexpr bool mobile = false;
+#endif
+  const char* reason = nullptr;
+  if (gfx_flag("nosafefetch")) {
+    g_safeVertexFetch = false;
+    reason = "off (debug flag)";
+  } else if (gfx_flag("safefetch")) {
+    g_safeVertexFetch = true;
+    reason = "on (debug flag)";
+  } else if (g_config.gpuCompat == AURORA_GPU_COMPAT_ON) {
+    g_safeVertexFetch = true;
+    reason = "on (setting)";
+  } else if (g_config.gpuCompat == AURORA_GPU_COMPAT_OFF) {
+    g_safeVertexFetch = false;
+    reason = "off (setting)";
+  } else {
+    g_safeVertexFetch = qualcomm || mobile;
+    reason = qualcomm ? "on (auto: Qualcomm Adreno)" : mobile ? "on (auto: mobile GPU)" : "off (auto)";
+  }
+  g_shaderDebug = (gfx_flag("notex") ? ShaderDebugNoTextures : 0u) |
+                  (gfx_flag("uvvis") ? ShaderDebugTexCoords : 0u) |
+                  (gfx_flag("dumpwgsl") ? ShaderDebugDumpSource : 0u);
+  Log.info("GPU compatibility vertex fetch {} on {}", reason, g_adapterName);
+}
+
+const char* adapter_name() noexcept { return g_adapterName.c_str(); }
 
 namespace {
 
@@ -594,6 +695,9 @@ bool initialize(AuroraBackend auroraBackend) {
   if (adapterName.IsUndefined()) {
     adapterName = wgpu::StringView("Unknown");
   }
+  g_adapterName = std::string{std::string_view{adapterName}};
+  load_gfx_flags();
+  choose_gpu_compat();
   auto description = g_adapterInfo.description;
   if (description.IsUndefined()) {
     description = wgpu::StringView("Unknown");
@@ -655,7 +759,7 @@ bool initialize(AuroraBackend auroraBackend) {
     g_adapter.GetFeatures(&supportedFeatures);
     for (size_t i = 0; i < supportedFeatures.featureCount; ++i) {
       const auto feature = supportedFeatures.features[i];
-      if (feature == wgpu::FeatureName::TextureCompressionBC) {
+      if (feature == wgpu::FeatureName::TextureCompressionBC && !gfx_flag("nobc")) {
         g_bcTexturesSupported = true;
         requiredFeatures.push_back(feature);
       }
@@ -695,16 +799,39 @@ bool initialize(AuroraBackend auroraBackend) {
         /* clang-format on */
     };
 #ifdef NDEBUG
-    enableToggles.push_back("skip_validation");
-    enableToggles.push_back("disable_robustness");
+    if (!gfx_flag("validate")) {
+      enableToggles.push_back("skip_validation");
+    }
+    if (!gfx_flag("robust")) {
+      enableToggles.push_back("disable_robustness");
+    }
 #endif
-    if (g_backendType == wgpu::BackendType::Vulkan) {
+    if (g_backendType == wgpu::BackendType::Vulkan && !gfx_flag("nomono")) {
       enableToggles.push_back("vulkan_monolithic_pipeline_cache");
+    }
+    std::vector<const char*> disableToggles;
+    for (const auto& flag : g_gfxFlags) {
+      if (flag.size() > 1 && flag.front() == '+') {
+        enableToggles.push_back(flag.c_str() + 1);
+      } else if (flag.size() > 1 && flag.front() == '-') {
+        disableToggles.push_back(flag.c_str() + 1);
+      }
+    }
+    g_logValidationErrors.store(gfx_flag("validate"), std::memory_order_relaxed);
+    if (!g_gfxFlags.empty()) {
+      std::string joined;
+      for (const auto& flag : g_gfxFlags) {
+        joined += joined.empty() ? "" : ",";
+        joined += flag;
+      }
+      Log.info("Graphics debug flags: {}", joined);
     }
     const wgpu::DawnTogglesDescriptor togglesDescriptor({
         .nextInChain = &cacheDescriptor,
         .enabledToggleCount = enableToggles.size(),
         .enabledToggles = enableToggles.data(),
+        .disabledToggleCount = disableToggles.size(),
+        .disabledToggles = disableToggles.data(),
     });
 #endif
     wgpu::DeviceDescriptor deviceDescriptor;
@@ -716,7 +843,12 @@ bool initialize(AuroraBackend auroraBackend) {
     deviceDescriptor.requiredLimits = &requiredLimits;
     deviceDescriptor.SetUncapturedErrorCallback(
         [](const wgpu::Device& device, wgpu::ErrorType type, wgpu::StringView message) {
-          if (g_initialized.load(std::memory_order_acquire)) {
+          if (g_logValidationErrors.load(std::memory_order_relaxed)) {
+            static std::atomic<uint32_t> s_logged{0};
+            if (s_logged.fetch_add(1, std::memory_order_relaxed) < 200) {
+              Log.error("WebGPU error {}: {}", underlying(type), message);
+            }
+          } else if (g_initialized.load(std::memory_order_acquire)) {
             FATAL("WebGPU error {}: {}", underlying(type), message);
           } else {
             Log.warn("WebGPU error {}: {}", underlying(type), message);
@@ -764,6 +896,17 @@ bool initialize(AuroraBackend auroraBackend) {
     if (!g_device) {
       return false;
     }
+#if defined(WEBGPU_DAWN) && !defined(__MINGW32__)
+    {
+      // Dawn picks its own workarounds from the adapter (vendor, driver, extensions); record them.
+      std::string toggles;
+      for (const char* toggle : dawn::native::GetTogglesUsed(g_device.Get())) {
+        toggles += toggles.empty() ? "" : " ";
+        toggles += toggle;
+      }
+      Log.info("Dawn toggles in use: {}", toggles);
+    }
+#endif
     g_device.SetLoggingCallback([](wgpu::LoggingType type, wgpu::StringView message) {
       AuroraLogLevel level = LOG_FATAL;
       switch (type) {

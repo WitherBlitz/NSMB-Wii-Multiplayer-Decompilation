@@ -9,6 +9,9 @@
 #include <dolphin/gx/GXEnum.h>
 
 #include <array>
+#include <vector>
+#include <filesystem>
+#include <cstdio>
 #include <mutex>
 #include <string_view>
 #include <utility>
@@ -611,18 +614,39 @@ constexpr std::array<std::string_view, GX_CA_ZERO + 1> TevAlphaArgNames{
     "APREV"sv, "A0"sv, "A1"sv, "A2"sv, "TEXA"sv, "RASA"sv, "KONST"sv, "ZERO"sv,
 };
 
+// Adreno drivers miscompile multi-component vertex attributes read through the vector fetch helpers:
+// 16-bit ones scramble skinned models' texture coordinates and normals, float pairs break the quads
+// that draw NSMBW's character lighting maps (upstream aurora #202 handles the 16-bit case). The GPU
+// compatibility path reads each component on its own instead.
+static std::string fetch_scalar_components(std::string_view fetchFn, u32 componentSize, u8 cnt, std::string_view buf,
+                                           std::string_view offs, std::string_view tail) {
+  std::string components;
+  for (u8 i = 0; i < cnt; ++i) {
+    components += fmt::format("{}{}_1(&{}, ({}) + {}u{})", i == 0 ? "" : ", ", fetchFn, buf, offs, i * componentSize,
+                              tail);
+  }
+  return fmt::format("vec{}f({})", cnt, components);
+}
+
 auto fetch_attr(const AttrConfig& mapping, std::string_view buf, std::string_view offs, bool le, u8 cntOverride = 0) -> std::string {
   const u8 cnt = cntOverride != 0 ? cntOverride : mapping.cnt;
+  const bool scalarComponents = webgpu::g_safeVertexFetch && cnt >= 2 && cnt <= 4;
+  const auto fixedTail = fmt::format(", {}, {}", mapping.frac, le);
   switch (mapping.compType) {
   case GX_U8:
+    if (scalarComponents) return fetch_scalar_components("fetch_u8", 1, cnt, buf, offs, fixedTail);
     return fmt::format("fetch_u8_{}(&{}, {}, {}, {})", cnt, buf, offs, mapping.frac, le);
   case GX_S8:
+    if (scalarComponents) return fetch_scalar_components("fetch_s8", 1, cnt, buf, offs, fixedTail);
     return fmt::format("fetch_s8_{}(&{}, {}, {}, {})", cnt, buf, offs, mapping.frac, le);
   case GX_U16:
+    if (scalarComponents) return fetch_scalar_components("fetch_u16", 2, cnt, buf, offs, fixedTail);
     return fmt::format("fetch_u16_{}(&{}, {}, {}, {})", cnt, buf, offs, mapping.frac, le);
   case GX_S16:
+    if (scalarComponents) return fetch_scalar_components("fetch_s16", 2, cnt, buf, offs, fixedTail);
     return fmt::format("fetch_s16_{}(&{}, {}, {}, {})", cnt, buf, offs, mapping.frac, le);
   case GX_F32:
+    if (scalarComponents) return fetch_scalar_components("fetch_f32", 4, cnt, buf, offs, fmt::format(", {}", le));
     return fmt::format("fetch_f32_{}(&{}, {}, {})", cnt, buf, offs, le);
   case GX_RGBA8:
     return fmt::format("unpack4x8unorm(load_u32_raw(&{}, {}))", buf, offs);
@@ -892,12 +916,59 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
                      outputValue);
 }
 
+// AURORA_GFX_FLAGS diagnostics (webgpu/gpu.cpp): every textureSampleBias(texture, sampler, uv, bias)
+// becomes grey or shows its coordinate, and each shader can be kept as <cache>/wgsl/<hash>.wgsl.
+static void apply_shader_debug(std::string& source, u64 hash) {
+  const u32 debug = webgpu::g_shaderDebug;
+  if ((debug & (webgpu::ShaderDebugNoTextures | webgpu::ShaderDebugTexCoords)) != 0) {
+    constexpr std::string_view call = "textureSampleBias(";
+    for (size_t pos = source.find(call); pos != std::string::npos; pos = source.find(call, pos + 1)) {
+      std::vector<std::string> args;
+      size_t depth = 1;
+      size_t argStart = pos + call.size();
+      size_t end = argStart;
+      for (; end < source.size() && depth > 0; ++end) {
+        const char c = source[end];
+        if (c == '(') {
+          ++depth;
+        } else if (c == ')' && --depth == 0) {
+          args.emplace_back(source.substr(argStart, end - argStart));
+        } else if (c == ',' && depth == 1) {
+          args.emplace_back(source.substr(argStart, end - argStart));
+          argStart = end + 1;
+        }
+      }
+      if (args.size() == 4) {
+        source.replace(pos, end - pos,
+                       (debug & webgpu::ShaderDebugNoTextures) != 0
+                           ? std::string{"vec4f(0.6, 0.6, 0.6, 1.0)"}
+                           : fmt::format("vec4f(fract({}), 0.0, 1.0)", args[2]));
+      }
+    }
+  }
+  if ((debug & webgpu::ShaderDebugDumpSource) != 0 && g_config.cachePath != nullptr) {
+    const std::string dir = std::string{g_config.cachePath} + "/wgsl";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (FILE* file = std::fopen(fmt::format("{}/{:016x}.wgsl", dir, hash).c_str(), "wb")) {
+      std::fwrite(source.data(), 1, source.size(), file);
+      std::fclose(file);
+    }
+  }
+}
+
 wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
   const auto info = build_shader_info(config);
 
-  std::string uniformPre;
+  // Storage reads for vertex pulling. The GPU compatibility path guards each with a bounds check
+  // that valid data never trips; its presence keeps Adreno's optimizer from the transformation that
+  // scrambles skinned vertices (upstream aurora #202).
+  std::string uniformPre = webgpu::g_safeVertexFetch
+      ? "\nfn load_word(p: ptr<storage, array<u32>>, word_idx: u32) -> u32 {\n"
+        "  if (word_idx < arrayLength(p)) {\n    return p[word_idx];\n  }\n  return 0u;\n}\n"
+      : "\nfn load_word(p: ptr<storage, array<u32>>, word_idx: u32) -> u32 {\n  return p[word_idx];\n}\n";
   std::string uniBufAttrs;
   std::string texBindings;
   std::string vtxOutAttrs;
@@ -1663,7 +1734,7 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         "    return out;";
   }
 
-  const auto shaderSource = fmt::format(R"""(
+  auto shaderSource = fmt::format(R"""(
 fn bswap32(v: u32, le: bool) -> u32 {{
   if (le) {{
     return v;
@@ -1679,7 +1750,7 @@ fn bswap16(v: u32, le: bool) -> u32 {{
 }}
 
 fn load_u8(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
-  let word = p[byte_off / 4u];
+  let word = load_word(p, byte_off / 4u);
   let shift = (byte_off & 3u) * 8u;
   return (word >> shift) & 0xFFu;
 }}
@@ -1687,11 +1758,11 @@ fn load_u8(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
 fn load_u32_raw(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
   let word_idx = byte_off >> 2u;
   let sub = byte_off & 3u;
-  let lo = p[word_idx];
+  let lo = load_word(p, word_idx);
   if (sub == 0u) {{
     return lo;
   }}
-  let hi = p[word_idx + 1u];
+  let hi = load_word(p, word_idx + 1u);
   let shift = sub * 8u;
   return (lo >> shift) | (hi << (32u - shift));
 }}
@@ -1699,11 +1770,11 @@ fn load_u32_raw(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
 fn load_u16(p: ptr<storage, array<u32>>, byte_off: u32, le: bool) -> u32 {{
   let word_idx = byte_off >> 2u;
   let sub = byte_off & 3u;
-  let word = p[word_idx];
+  let word = load_word(p, word_idx);
   if (sub <= 2u) {{
     return bswap16(extractBits(word, sub * 8u, 16u), le);
   }}
-  let next = p[word_idx + 1u];
+  let next = load_word(p, word_idx + 1u);
   let raw = extractBits(word, 24u, 8u) | (extractBits(next, 0u, 8u) << 8u);
   return bswap16(raw, le);
 }}
@@ -1711,13 +1782,13 @@ fn load_u16(p: ptr<storage, array<u32>>, byte_off: u32, le: bool) -> u32 {{
 fn load_u24_raw(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
   let word_idx = byte_off >> 2u;
   let sub = byte_off & 3u;
-  let word = p[word_idx];
+  let word = load_word(p, word_idx);
   // Three bytes at offsets zero or one fit entirely in this word. Do not
   // access the next word: this attribute may end at the binding boundary.
   if (sub <= 1u) {{
     return (word >> (sub * 8u)) & 0x00FFFFFFu;
   }}
-  let next = p[word_idx + 1u];
+  let next = load_word(p, word_idx + 1u);
   let shift = sub * 8u;
   return ((word >> shift) | (next << (32u - shift))) & 0x00FFFFFFu;
 }}
@@ -1747,7 +1818,7 @@ fn raw_fetch_u8_1(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
 fn raw_fetch_u8_2(p: ptr<storage, array<u32>>, byte_off: u32) -> vec2u {{
   let word_idx = byte_off >> 2u;
   let sub = byte_off & 3u;
-  let word = p[word_idx];
+  let word = load_word(p, word_idx);
   if (sub <= 2u) {{
     let shift = sub * 8u;
     return vec2u(
@@ -1755,7 +1826,7 @@ fn raw_fetch_u8_2(p: ptr<storage, array<u32>>, byte_off: u32) -> vec2u {{
       extractBits(word, shift + 8u, 8u),
     );
   }}
-  let next = p[word_idx + 1u];
+  let next = load_word(p, word_idx + 1u);
   return vec2u(
     extractBits(word, 24u, 8u),
     extractBits(next, 0u, 8u),
@@ -2081,6 +2152,9 @@ fn fs_main(in: VertexOutput) -> {9} {{{6}{5}
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
                                         fragmentFnPre, vtxXfrAttrsPre, uniformPre, fragmentReturnType,
                                         fragmentReturn);
+  if (webgpu::g_shaderDebug != 0) {
+    apply_shader_debug(shaderSource, hash);
+  }
   wgpu::ShaderSourceWGSL wgslDescriptor{};
   wgslDescriptor.code = shaderSource.c_str();
   const auto label = fmt::format("GX Shader {:x}", hash);

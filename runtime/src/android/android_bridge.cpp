@@ -2,6 +2,7 @@
 #if defined(__ANDROID__)
 
 #include "display_settings.h"
+#include "graphics_info.h"
 #include "runtime_config.h"
 #include "settings_overlay.h"
 #include "virtual_remote.h"
@@ -9,6 +10,7 @@
 #include <jni.h>
 
 #include <cstdint>
+#include <string>
 
 extern "C" {
 
@@ -33,6 +35,18 @@ JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeApplyDisplaySett
     RuntimeConfigFile::SetAspectMode(settings.aspect);
     RuntimeConfigFile::SetResolutionMultiplier(settings.renderScale);
     settings_overlay::SetShowFps(showFps == JNI_TRUE);
+}
+
+// GameActivity.nativeGraphicsInfo: the GPU the game is drawing with and whether the GPU
+// compatibility fixes are on, as "<name>\n<1|0>"; empty until the renderer has started.
+JNIEXPORT jstring JNICALL Java_com_wither_nsmbw_GameActivity_nativeGraphicsInfo(JNIEnv* env, jclass)
+{
+    const std::string name = GraphicsInfo::Name();
+    if (name.empty()) {
+        return env->NewStringUTF("");
+    }
+    const std::string info = name + "\n" + (GraphicsInfo::CompatActive() ? "1" : "0");
+    return env->NewStringUTF(info.c_str());
 }
 
 } // extern "C"

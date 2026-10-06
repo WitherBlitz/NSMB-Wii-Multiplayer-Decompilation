@@ -35,6 +35,7 @@ struct RuntimeUserConfig {
     std::optional<bool> widescreen;
     std::optional<bool> forceAspect169;
     std::optional<int32_t> aspectMode;  // 0 original 4:3, 1 16:9, 2 fill the window (DisplaySettings)
+    std::optional<int32_t> gpuCompat;  // 0 auto (by graphics adapter), 1 on, 2 off (AuroraGpuCompat)
     std::optional<int32_t> windowPosX;
     std::optional<int32_t> windowPosY;
     std::optional<uint32_t> windowWidth;
@@ -434,6 +435,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     if (auto value = FindConfigInt(document, "video", "aspect_mode"); value && *value >= 0 && *value <= 2) {
         config.aspectMode = *value;
     }
+    if (auto value = FindConfigInt(document, "video", "gpu_compat"); value && *value >= 0 && *value <= 2) {
+        config.gpuCompat = *value;
+    }
     config.windowPosX = FindConfigInt(document, "video", "window_x");
     config.windowPosY = FindConfigInt(document, "video", "window_y");
     if (auto value = FindConfigUint(document, "video", "window_width"); value && *value != 0) {
@@ -804,6 +808,15 @@ inline bool ForceAspect169Enabled(bool fallback = false) {
 // Display aspect (DisplaySettings): 0 original 4:3, 1 16:9, 2 fill the window or screen.
 inline int32_t AspectMode(int32_t fallback) {
     return Get().aspectMode.value_or(fallback);
+}
+
+inline int32_t GpuCompat() {
+    return Get().gpuCompat.value_or(0);
+}
+
+inline bool SetGpuCompat(int32_t value) {
+    Mutable().gpuCompat = value;
+    return WriteSetting("video", "gpu_compat", std::to_string(value));
 }
 
 inline bool SetAspectMode(int32_t value) {

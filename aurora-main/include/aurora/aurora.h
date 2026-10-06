@@ -77,6 +77,14 @@ typedef struct AuroraEvent AuroraEvent;
 typedef void (*AuroraLogCallback)(AuroraLogLevel level, const char* module, const char* message, unsigned int len);
 typedef void (*AuroraImGuiInitCallback)(const AuroraWindowSize* size);
 
+// GPU driver workarounds. AUTO picks them from the graphics adapter in use (see AuroraInfo.gpuName);
+// ON and OFF force them, for a device the detection gets wrong.
+typedef enum {
+  AURORA_GPU_COMPAT_AUTO = 0,
+  AURORA_GPU_COMPAT_ON = 1,
+  AURORA_GPU_COMPAT_OFF = 2,
+} AuroraGpuCompat;
+
 typedef struct {
   const char* appName;
   const char* userPath;
@@ -125,6 +133,8 @@ typedef struct {
   // Optional directory for the portable GX pipeline database. When null, the
   // database is stored in cachePath with Dawn's machine-specific cache.
   const char* pipelineCachePath;
+
+  AuroraGpuCompat gpuCompat;
 } AuroraConfig;
 
 typedef enum {
@@ -141,6 +151,9 @@ typedef struct {
   AuroraInitializationStatus initializationStatus;
   // On failure, owned by SDL on the calling thread. Copy before another SDL call.
   const char* initializationError;
+  // The graphics adapter ("Adreno (TM) 840") and whether the GPU driver workarounds are on.
+  const char* gpuName;
+  bool gpuCompatActive;
 } AuroraInfo;
 
 AuroraInfo aurora_initialize(int argc, char* argv[], const AuroraConfig* config);

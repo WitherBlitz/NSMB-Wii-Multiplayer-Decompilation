@@ -55,6 +55,9 @@
 #endif
 #include <unistd.h>
 #endif
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
 
 #include "abi_bridge.h"
 #include "guest_flat_memory.h"
@@ -64,6 +67,7 @@
 #include "ppc_runtime.h"
 #include "aurora_events.h"
 #include "display_settings.h"
+#include "graphics_info.h"
 #include "wii_remote_input.h"
 #include "discord_presence.h"
 #include "fiber_manager.h"
@@ -1389,6 +1393,8 @@ int RuntimeMain(int argc, char** argv) {
                                          RuntimeConfigFile::TextureDumps(false);
         // No vsync knob: aurora always configures a non-blocking present mode.
         auroraConfig.desiredBackend = BACKEND_AUTO;
+        // GPU driver workarounds: picked from the graphics adapter unless the player forced them.
+        auroraConfig.gpuCompat = static_cast<AuroraGpuCompat>(RuntimeConfigFile::GpuCompat());
         // DisplaySettings applies the viewport policy and render height at the first frame boundary.
         // One table for both directions. RuntimeConfigFile::IsSupportedGraphicsApi
         // whitelists exactly these config names, so an unrecognised value has
@@ -1434,6 +1440,25 @@ int RuntimeMain(int argc, char** argv) {
         // aurora_initialize does; a Bluetooth Wii Remote paired before launch must be
         // visible on that first scan.
         WiiRemoteInput::ConfigureSdlHints(RuntimeConfigFile::WiiRemotesEnabled(true));
+#if defined(__ANDROID__)
+        // Graphics debugging on a phone without a rebuild: `adb shell setprop debug.nsmbw.gfx
+        // validate,robust` reaches aurora's device setup as AURORA_GFX_FLAGS (webgpu/gpu.cpp).
+        // A property holds 91 characters, so debug.nsmbw.gfx2 and gfx3 continue the list.
+        {
+            std::string flags;
+            for (const char* name : {"debug.nsmbw.gfx", "debug.nsmbw.gfx2", "debug.nsmbw.gfx3"}) {
+                char value[PROP_VALUE_MAX] = {};
+                if (__system_property_get(name, value) > 0) {
+                    flags += flags.empty() ? "" : ",";
+                    flags += value;
+                }
+            }
+            if (!flags.empty()) {
+                setenv("AURORA_GFX_FLAGS", flags.c_str(), 1);
+                RT_LOG(RT_TAG_RUNTIME) << "debug.nsmbw.gfx flags: " << flags << std::endl;
+            }
+        }
+#endif
 
         const AuroraInfo auroraInfo = aurora_initialize(0, nullptr, &auroraConfig);
         if (auroraInfo.initializationStatus != AURORA_INITIALIZATION_SUCCESS) {
@@ -1449,6 +1474,9 @@ int RuntimeMain(int argc, char** argv) {
             RT_LOG(RT_TAG_RUNTIME) << "graphics backend: " << backendDisplayName(auroraInfo.backend)
                       << std::endl;
         }
+        GraphicsInfo::Set(auroraInfo.gpuName != nullptr ? auroraInfo.gpuName : "", auroraInfo.gpuCompatActive);
+        RT_LOG(RT_TAG_RUNTIME) << "graphics adapter: " << GraphicsInfo::Name() << ", compatibility fixes "
+                  << (auroraInfo.gpuCompatActive ? "on" : "off") << std::endl;
         aurora_set_frame_worker_wait_callback(ServiceGuestTimingDuringAuroraFrameWait);
         GxGuestWrite::InstallAuroraHooks();
         DisplaySettings::OnFrameBoundary(auroraInfo.windowSize.native_fb_width,

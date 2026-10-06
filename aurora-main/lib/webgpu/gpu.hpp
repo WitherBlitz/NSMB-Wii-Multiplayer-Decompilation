@@ -58,6 +58,18 @@ extern wgpu::RenderPipeline g_CopyPipeline;
 extern wgpu::BindGroup g_CopyBindGroup;
 extern wgpu::Instance g_instance;
 extern bool g_bcTexturesSupported;
+// Vertex fetch written for drivers that miscompile aurora's storage-buffer vertex pulling (Adreno:
+// skinned models' texture coordinates and normals come out scrambled). See gx/shader.cpp.
+extern bool g_safeVertexFetch;
+// Shader diagnostics from AURORA_GFX_FLAGS (gx/shader.cpp apply_shader_debug).
+enum ShaderDebug : uint32_t {
+  ShaderDebugNoTextures = 1u << 0,
+  ShaderDebugTexCoords = 1u << 1,
+  ShaderDebugDumpSource = 1u << 2,
+};
+extern uint32_t g_shaderDebug;
+// The adapter's device name, for AuroraInfo.gpuName.
+const char* adapter_name() noexcept;
 
 bool initialize(AuroraBackend backend);
 void shutdown();
