@@ -9,6 +9,11 @@ final class AppSettings {
     static final int ASPECT_16_9 = 1;
     static final int ASPECT_FILL = 2;
 
+    /** GPU driver workarounds: picked from the phone's GPU, or forced (AuroraGpuCompat). */
+    static final int GPU_COMPAT_AUTO = 0;
+    static final int GPU_COMPAT_ON = 1;
+    static final int GPU_COMPAT_OFF = 2;
+
     /** Render scales offered in the menu; 1x renders 480 lines, whatever the aspect. */
     static final float[] RESOLUTION_SCALES = {0.5f, 0.75f, 1f, 2f, 3f, 4f};
 
@@ -26,6 +31,9 @@ final class AppSettings {
 
     float resolutionScale() { return prefs.getFloat("resolution_scale", 1f); }
     void setResolutionScale(float scale) { prefs.edit().putFloat("resolution_scale", scale).commit(); }
+
+    int gpuCompat() { return prefs.getInt("gpu_compat", GPU_COMPAT_AUTO); }
+    void setGpuCompat(int mode) { prefs.edit().putInt("gpu_compat", mode).commit(); }
 
     boolean showFps() { return prefs.getBoolean("show_fps", false); }
     void setShowFps(boolean show) { prefs.edit().putBoolean("show_fps", show).commit(); }

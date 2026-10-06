@@ -27,6 +27,9 @@ public final class GameActivity extends SDLActivity
     /** The Display menu: aspect, render scale (480 lines per 1x), FPS counter (DisplaySettings). */
     static native void nativeApplyDisplaySettings(int aspect, float renderScale, boolean showFps);
 
+    /** "GPU name\n1|0": the GPU the game draws with and whether its compatibility fixes are on. */
+    static native String nativeGraphicsInfo();
+
     private AppSettings settings;
     private boolean bootWidescreen;  // the game reads 4:3 versus widescreen once, when it starts
     private TouchControlsView touch;
@@ -171,15 +174,71 @@ public final class GameActivity extends SDLActivity
             "Aspect Ratio: " + aspectLabel(settings.aspectMode()),
             "Render Resolution: " + AppSettings.resolutionLabel(settings.resolutionScale()),
             "FPS Counter: " + (settings.showFps() ? "On" : "Off"),
+            "Graphics Compatibility: " + gpuCompatLabel(),
         };
         new AlertDialog.Builder(this)
                 .setTitle("Display")
                 .setItems(items, (dialog, which) -> {
                     if (which == 0) showAspectChoice();
                     else if (which == 1) showResolutionChoice();
-                    else { settings.setShowFps(!settings.showFps()); displayChanged(); showDisplayMenu(); }
+                    else if (which == 2) { settings.setShowFps(!settings.showFps()); displayChanged(); showDisplayMenu(); }
+                    else showGpuCompatChoice();
                 })
                 .setNegativeButton("Back", (dialog, which) -> onMenu())
+                .show();
+    }
+
+    /** [GPU name, "1" or "0"], or null before the renderer has started. */
+    private String[] graphicsInfo() {
+        if (!nativeReady) return null;
+        try {
+            final String info = nativeGraphicsInfo();
+            final String[] parts = info == null ? new String[0] : info.split("\n", 2);
+            return parts.length == 2 ? parts : null;
+        } catch (UnsatisfiedLinkError e) {
+            return null;
+        }
+    }
+
+    /** "Auto (on for Adreno (TM) 840)": the setting, and for Auto what the game chose for this GPU. */
+    private String gpuCompatLabel() {
+        final int mode = settings.gpuCompat();
+        if (mode == AppSettings.GPU_COMPAT_ON) return "On";
+        if (mode == AppSettings.GPU_COMPAT_OFF) return "Off";
+        final String[] info = graphicsInfo();
+        if (info == null) return "Auto";
+        return "Auto (" + ("1".equals(info[1]) ? "on" : "off") + " for " + info[0] + ")";
+    }
+
+    /**
+     * Fixes for phone GPUs whose drivers break the game's 3D models (scrambled textures, exploding
+     * characters). Auto turns them on for the GPU the game detects; On and Off force them.
+     */
+    private void showGpuCompatChoice() {
+        final String[] info = graphicsInfo();
+        final String[] labels = {
+            "Auto (recommended)" + (info != null ? ": " + ("1".equals(info[1]) ? "on" : "off") + " for " + info[0] : ""),
+            "On: always use the GPU fixes",
+            "Off: never use them",
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Graphics Compatibility")
+                .setSingleChoiceItems(labels, settings.gpuCompat(), (dialog, which) -> {
+                    final boolean changed = which != settings.gpuCompat();
+                    settings.setGpuCompat(which);
+                    try {
+                        AppFiles.writeConfig(this, settings);
+                    } catch (Exception e) {
+                        Log.e(TAG, "could not save the graphics compatibility setting", e);
+                    }
+                    if (changed) {
+                        Toast.makeText(this, "Graphics Compatibility applies the next time the game starts",
+                                Toast.LENGTH_LONG).show();
+                    }
+                    dialog.dismiss();
+                    showDisplayMenu();
+                })
+                .setNegativeButton("Back", (dialog, which) -> showDisplayMenu())
                 .show();
     }
 

@@ -74,6 +74,7 @@ final class AppFiles {
         final String text = "# Written by the app before every start; change settings in the game menu.\n"
                 + "\n[video]\n"
                 + "aspect_mode = " + settings.aspectMode() + "\n"
+                + "gpu_compat = " + settings.gpuCompat() + "\n"
                 + "resolution_multiplier = " + String.format(Locale.ROOT, "%.2f", settings.resolutionScale()) + "\n"
                 + "frame_interpolation_fps = 0\n"
                 + "graphics_api = \"auto\"\n"
