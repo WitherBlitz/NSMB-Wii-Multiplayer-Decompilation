@@ -34,7 +34,9 @@ using Phase = NetplayLobby::Phase;
 constexpr uint32_t kLeft = 0x0001, kRight = 0x0002, kDown = 0x0004, kUp = 0x0008, kTwo = 0x0100, kOne = 0x0200,
                    kB = 0x0400, kA = 0x0800;
 
-enum class Screen { None, Mode, Lan, Count, Rooms, Room, Message };
+enum class Screen { None, Mode, Lan, ChooseFile, Count, Rooms, Room, Message };
+
+constexpr uint16_t kSceneGameSetup = 0x00A;  // the file select and "Select Players"
 
 enum Event : uint32_t {
     kEvLeft = 1, kEvRight = 2, kEvUp = 4, kEvDown = 8, kEvConfirm = 16, kEvBack = 32,
@@ -43,7 +45,7 @@ enum Event : uint32_t {
 struct Ui {
     Screen screen = Screen::None;
     int cursor = 0;
-    bool armed = true;           // show the mode menu the next time "Select Players" comes up
+    bool armed = true;           // show the mode menu the next time the file select comes up
     uint32_t prevHold = 0;       // channel 1's buttons at the last read
     uint32_t events = 0;         // menu events since the last frame
     bool swallowConfirm = false; // keep a confirm press from the game until it is released
@@ -54,6 +56,8 @@ struct Ui {
     int frame = 0;               // frames the current screen has been up
     int countHintFrames = 0;
     bool restarting = false;
+    uint32_t injectButtons = 0;  // buttons the game is given for a few reads (a Back press)
+    int injectReads = 0;
 };
 
 Ui g_ui;
@@ -78,8 +82,9 @@ Assets& GetAssets() {
     return assets;
 }
 
+// The steps of Create Room that happen on the game's own screens keep the remote with the game.
 bool IsModal(Screen screen) {
-    return screen != Screen::None && screen != Screen::Count;
+    return screen != Screen::None && screen != Screen::ChooseFile && screen != Screen::Count;
 }
 
 const char* ScreenName(Screen screen) {
@@ -87,6 +92,7 @@ const char* ScreenName(Screen screen) {
     case Screen::None: return "none";
     case Screen::Mode: return "LAN or Couch";
     case Screen::Lan: return "Join or Create Room";
+    case Screen::ChooseFile: return "room save file (game screen)";
     case Screen::Count: return "room size (game screen)";
     case Screen::Rooms: return "rooms";
     case Screen::Room: return "room";
@@ -246,15 +252,26 @@ void DrawLan(const Canvas& c) {
     ButtonPair(c, "Join", "Create Room", 322, g_ui.cursor);
 }
 
-void DrawCountHint(const Canvas& c) {
-    // A banner over the game's own "Select Players" screen.
-    const float y = -142.0f;  // between the number buttons and the game's Back button
+// A hint over one of the game's own screens, in the empty right half of its title bar.
+void Banner(const Canvas& c, const std::string& text, uint32_t color = 0xFFFFFFFFu) {
+    const float x = 140.0f, y = 192.0f, halfWidth = 178.0f, halfHeight = 19.0f;
     c.list->AddRectFilled(
-        ImVec2(c.view.centerX - 270 * c.view.scale, c.view.centerY - (y + 19) * c.view.scale),
-        ImVec2(c.view.centerX + 270 * c.view.scale, c.view.centerY - (y - 19) * c.view.scale),
-        IM_COL32(20, 40, 90, static_cast<int>(170 * c.alpha)), 10 * c.view.scale);
-    Text(c, g_ui.countHintFrames > 0 ? "A LAN room needs 2 to 4 players." : "How many players can join your room?",
-         0, y, 28, 1, g_ui.countHintFrames > 0 ? 0xFFE040FFu : 0xFFFFFFFFu);
+        ImVec2(c.view.centerX + (x - halfWidth) * c.view.scale, c.view.centerY - (y + halfHeight) * c.view.scale),
+        ImVec2(c.view.centerX + (x + halfWidth) * c.view.scale, c.view.centerY - (y - halfHeight) * c.view.scale),
+        IM_COL32(20, 40, 90, static_cast<int>(185 * c.alpha)), 10 * c.view.scale);
+    Text(c, text, x, y, 24, 1, color);
+}
+
+void DrawChooseFileHint(const Canvas& c) {
+    Banner(c, "Pick the save for your room.");
+}
+
+void DrawCountHint(const Canvas& c) {
+    if (g_ui.countHintFrames > 0) {
+        Banner(c, "A LAN room needs 2 to 4 players.", 0xFFE040FFu);
+    } else {
+        Banner(c, "How many can join your room?");
+    }
 }
 
 void DrawRooms(const Canvas& c, const NetplayLobby::Snapshot& lobby) {
@@ -415,8 +432,10 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
                 NetplayLobby::Browse();
                 Show(Screen::Rooms);
             } else {
+                // The game's own file select picks the save the room plays, then its "Select
+                // Players" the room's size.
                 g_ui.countHintFrames = 0;
-                Show(Screen::Count);
+                Show(Screen::ChooseFile);
             }
         }
         break;
@@ -453,8 +472,13 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
         if (lobby.localSlot == 0 && lobby.phase == Phase::Hosting) {
             if (left || right) g_ui.cursor ^= 1;
             if (back || (confirm && g_ui.cursor == 1)) {
+                // Cancel: close the room and take the game back from "Select Players" to the file
+                // select, where LAN or Couch comes up again.
                 NetplayLobby::Stop();
-                Show(Screen::Mode);
+                Show(Screen::None);
+                g_ui.armed = true;
+                g_ui.injectButtons = kOne;
+                g_ui.injectReads = 4;
             } else if (confirm && g_ui.cursor == 0 && lobby.members.size() >= 2) {
                 NetplayLobby::Start();
             }
@@ -499,24 +523,34 @@ void Draw() {
         return;
     }
 
-    // The game's "Select Players" screen decides when the menus come up and go away.
+    // The game's own setup screens decide when the menus come up and go away: LAN or Couch as the
+    // file select opens, once per visit to it from the title.
+    const uint16_t scene = GameMenus::CurrentScene();
+    const bool fileWaiting = GameMenus::FileSelectWaiting();
     const GameMenus::SelectPlayers players = GameMenus::SelectPlayersState();
-    static GameMenus::SelectPlayers lastPlayers = GameMenus::SelectPlayers::Hidden;
-    if (players != lastPlayers) {
-        RT_LOGF(RT_TAG_RUNTIME, "netplay ui: Select Players state %d -> %d\n", static_cast<int>(lastPlayers),
-                static_cast<int>(players));
-        lastPlayers = players;
-    }
-    if (players == GameMenus::SelectPlayers::Hidden || players == GameMenus::SelectPlayers::Other) {
-        if (g_ui.screen == Screen::Count || g_ui.screen == Screen::Mode || g_ui.screen == Screen::Lan) {
-            Show(Screen::None);  // backed out to the file select
+    if (scene != kSceneGameSetup) {
+        // Back to the title, or into the game: next time the file select opens, ask again.
+        if (g_ui.screen == Screen::Mode || g_ui.screen == Screen::Lan || g_ui.screen == Screen::ChooseFile ||
+            g_ui.screen == Screen::Count) {
+            Show(Screen::None);
         }
         if (g_ui.screen == Screen::None) {
             g_ui.armed = true;
         }
-    } else if (players == GameMenus::SelectPlayers::Choosing && g_ui.armed && g_ui.screen == Screen::None) {
+    }
+    if (fileWaiting && g_ui.armed && g_ui.screen == Screen::None) {
         g_ui.armed = false;
         Show(Screen::Mode);
+    }
+    // Create Room: picking a file leads to the game's "Select Players", which sizes the room; Back
+    // there returns to the file pick, and Free-for-All or Coin Battle leave room-making behind.
+    if (g_ui.screen == Screen::ChooseFile && players == GameMenus::SelectPlayers::Choosing) {
+        Show(Screen::Count);
+    } else if (g_ui.screen == Screen::Count && players == GameMenus::SelectPlayers::Hidden && fileWaiting) {
+        Show(Screen::ChooseFile);
+    } else if ((g_ui.screen == Screen::ChooseFile || g_ui.screen == Screen::Count) &&
+               players == GameMenus::SelectPlayers::Other) {
+        Show(Screen::None);
     }
     if (g_ui.screen == Screen::None) {
         return;
@@ -546,6 +580,9 @@ void Draw() {
     ++g_ui.frame;
     Canvas c{list, GameLayout::GameView(), std::min(1.0f, g_ui.frame / 8.0f)};
     switch (g_ui.screen) {
+    case Screen::ChooseFile:
+        DrawChooseFileHint(c);
+        break;
     case Screen::Count:
         DrawCountHint(c);
         break;
@@ -592,7 +629,7 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         if (pressed & (kTwo | kA)) g_ui.events |= kEvConfirm;
         if (pressed & (kOne | kB)) g_ui.events |= kEvBack;
 
-        // Back on the first menu goes back in the game too: let the press through and close.
+        // Back on the first menu goes back in the game too (to the title): let the press through.
         if (g_ui.screen == Screen::Mode && (pressed & kOne) != 0) {
             Show(Screen::None);
             return;
@@ -611,6 +648,10 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         }
         g_ui.heldFromMenu &= hold;
         sample.hold &= ~g_ui.heldFromMenu;
+        if (g_ui.injectReads > 0 && !Modal()) {
+            --g_ui.injectReads;
+            sample.hold |= g_ui.injectButtons;
+        }
     }
     if (Modal()) {
         // The game sees the remote connected and at rest.
