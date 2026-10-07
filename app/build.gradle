@@ -26,6 +26,11 @@ android {
         }
     }
 
+    lint {
+        // Release builds skip lint's vital checks: this machine builds offline, without lint's jars.
+        checkReleaseBuilds false
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
