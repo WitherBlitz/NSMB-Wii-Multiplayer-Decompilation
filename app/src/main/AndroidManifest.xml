@@ -10,6 +10,12 @@
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
 
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- LAN play: UDP between devices, and a multicast lock so the Wi-Fi driver hands the app the
+         broadcast packets rooms are discovered with. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application
         android:allowBackup="false"
