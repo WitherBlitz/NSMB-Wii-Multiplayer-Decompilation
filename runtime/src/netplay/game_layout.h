@@ -88,6 +88,10 @@ private:
 std::shared_ptr<Font> LoadFont(const std::string& name);
 bool FontReady(const Font* font);
 float MeasureText(const Font& font, const std::u16string& text, float fontSize);
+// Breaks `text` at spaces into lines no wider than `maxWidth` layout units.
+std::vector<std::u16string> WrapText(const Font& font, const std::u16string& text, float fontSize, float maxWidth);
+// The height of one line of `font` at `fontSize`, in layout units.
+float LineHeight(const Font& font, float fontSize);
 void DrawText(ImDrawList* list, const View& view, const Font& font, const std::u16string& text, float x, float y,
               float fontSize, uint32_t topColor, uint32_t bottomColor, float alpha, int originH = 1, int originV = 1);
 

@@ -1,6 +1,7 @@
 #include "netplay/game_layout.h"
 
 #include "display_settings.h"
+#include "runtime_config.h"
 #include "runtime_log.h"
 
 #include <aurora/imgui.h>
@@ -12,8 +13,6 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
-
-extern "C" const char* DVDResolveHostPathForTest(const char* dvdPath);
 
 namespace GameLayout {
 
@@ -60,14 +59,20 @@ float BEF(const uint8_t* p) {
 }
 int16_t BES16(const uint8_t* p) { return static_cast<int16_t>(BE16(p)); }
 
+// Straight from the extracted game's files/ folder (the disc root): this also works before the
+// game has set up its own disc access, which the boot screen needs.
 bool ReadDiscFile(const std::string& dvdPath, std::vector<uint8_t>& out) {
-    const char* host = DVDResolveHostPathForTest(dvdPath.c_str());
-    if (host == nullptr) {
-        RT_LOGF(RT_TAG_RUNTIME, "netplay ui: %s is not on the disc\n", dvdPath.c_str());
+    const std::filesystem::path root = RuntimeConfigFile::ResolvedDvdRoot();
+    if (root.empty()) {
         return false;
     }
-    std::ifstream in(std::filesystem::u8path(host), std::ios::binary);
+    std::string relative = dvdPath;
+    while (!relative.empty() && relative.front() == '/') {
+        relative.erase(relative.begin());
+    }
+    std::ifstream in(root / "files" / std::filesystem::u8path(relative), std::ios::binary);
     if (!in) {
+        RT_LOGF(RT_TAG_RUNTIME, "netplay ui: %s is not in the game folder\n", dvdPath.c_str());
         return false;
     }
     out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
@@ -591,6 +596,31 @@ void DrawTextLines(ImDrawList* list, const View& view, const Mtx& m, const Font&
 
 } // namespace
 
+std::vector<std::u16string> WrapText(const Font& font, const std::u16string& text, float fontSize, float maxWidth) {
+    std::vector<std::u16string> lines;
+    std::u16string line;
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t end = text.find(u' ', pos);
+        if (end == std::u16string::npos) {
+            end = text.size();
+        }
+        const std::u16string word = text.substr(pos, end - pos);
+        const std::u16string candidate = line.empty() ? word : line + u' ' + word;
+        if (!line.empty() && MeasureText(font, candidate, fontSize) > maxWidth) {
+            lines.push_back(line);
+            line = word;
+        } else {
+            line = candidate;
+        }
+        pos = end + 1;
+    }
+    if (!line.empty()) {
+        lines.push_back(line);
+    }
+    return lines;
+}
+
 float MeasureText(const Font& font, const std::u16string& text, float fontSize) {
     if (!font.ok || font.width == 0) {
         return 0;
@@ -600,6 +630,10 @@ float MeasureText(const Font& font, const std::u16string& text, float fontSize) 
         widest = std::max(widest, line.width);
     }
     return widest;
+}
+
+float LineHeight(const Font& font, float fontSize) {
+    return font.height == 0 ? 0 : font.linefeed * fontSize / font.height;
 }
 
 void DrawText(ImDrawList* list, const View& view, const Font& font, const std::u16string& text, float x, float y,

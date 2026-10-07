@@ -1,3 +1,4 @@
+#include "netplay/game_layout.h"
 #include "netplay_ui.h"
 #include "settings_overlay.h"
 #include "audio_backend.h"
@@ -1253,21 +1254,66 @@ void DrawStartupScreen() {
                                         ImGuiWindowFlags_NoSavedSettings |
                                         ImGuiWindowFlags_NoBringToFrontOnFocus;
     if (ImGui::Begin("Wiicompiled Startup", nullptr, kFlags)) {
-        ImGui::SetWindowFontScale(1.25f);
-        constexpr const char* kTitle = "WiiCompiled";
-        const ImVec2 titleSize = ImGui::CalcTextSize(kTitle);
-        const float titleX = std::max(0.0f, (viewport->Size.x - titleSize.x) * 0.5f);
-        const float startY = std::max(0.0f, (viewport->Size.y - titleSize.y) * 0.5f);
-        ImGui::SetCursorPos(ImVec2(titleX, startY));
-        ImGui::TextUnformatted(kTitle);
+        // The credits, in the game's own fonts when the game folder is readable (it always is once
+        // the game can start), else in the overlay's font.
+        constexpr const char* kTitle = "Made by WitherBlitz";
+        constexpr const char* kCredit =
+            "Code from WiiCompiled used and modified by an LLM to make this port possible. Essentially "
+            "wasn't made by me at this point, I just know how to use a keyboard and have enough dedication "
+            "for this game I grew up with to make it work on my phone.";
+        static const std::shared_ptr<GameLayout::Font> titleFont = GameLayout::LoadFont("mj2d01_marioFont_64_IA4.brfnt");
+        static const std::shared_ptr<GameLayout::Font> bodyFont = GameLayout::LoadFont("mj2d00_MessageFont_32_I4.brfnt");
+        float startY = 0.0f;
+        float titleHeight = ImGui::GetTextLineHeight();
+        const bool gameFonts = GameLayout::FontReady(titleFont.get()) && GameLayout::FontReady(bodyFont.get());
+        char shaderLine[96] = {};
         if (g_bootShaderNotice && !g_bootShadersReady.load(std::memory_order_relaxed)) {
-            ImGui::SetWindowFontScale(0.9f);
-            char line[96];
-            std::snprintf(line, sizeof(line), "Compiling shaders, please hold on: %u remaining",
+            std::snprintf(shaderLine, sizeof(shaderLine), "Compiling shaders, please hold on: %u remaining",
                           aurora_get_queued_pipeline_count());
-            const float lineX = std::max(0.0f, (viewport->Size.x - ImGui::CalcTextSize(line).x) * 0.5f);
+        }
+        if (gameFonts) {
+            ImDrawList* list = ImGui::GetWindowDrawList();
+            const GameLayout::View view = GameLayout::GameView();
+            const float maxWidth = std::min(560.0f, viewport->Size.x / view.scale - 48.0f);
+            const auto lines = GameLayout::WrapText(*bodyFont, GameLayout::Utf16(kCredit), 26.0f, maxWidth);
+            const float lineHeight = GameLayout::LineHeight(*bodyFont, 26.0f) + 4.0f;
+            const float blockTop = 40.0f + lines.size() * lineHeight / 2.0f;
+            GameLayout::DrawText(list, view, *titleFont, GameLayout::Utf16(kTitle), 0.0f, blockTop + 38.0f, 46.0f,
+                                 0xFFFF00FFu, 0xFF8C00FFu, 1.0f, 1, 1);
+            float y = blockTop - 16.0f;
+            for (const auto& line : lines) {
+                GameLayout::DrawText(list, view, *bodyFont, line, 2.0f, y - 2.0f, 26.0f, 0x30200AFFu, 0x30200AFFu,
+                                     0.6f, 1, 1);
+                GameLayout::DrawText(list, view, *bodyFont, line, 0.0f, y, 26.0f, 0xFFFFFFFFu, 0xFFFFFFFFu, 1.0f, 1, 1);
+                y -= lineHeight;
+            }
+            if (shaderLine[0] != '\0') {
+                GameLayout::DrawText(list, view, *bodyFont, GameLayout::Utf16(shaderLine), 0.0f, y - 22.0f, 20.0f,
+                                     0xB4BECAFFu, 0xB4BECAFFu, 1.0f, 1, 1);
+            }
+            startY = view.centerY - (y - 20.0f) * view.scale;
+            titleHeight = 0.0f;
+        } else {
+            ImGui::SetWindowFontScale(1.25f);
+            const ImVec2 titleSize = ImGui::CalcTextSize(kTitle);
+            startY = std::max(0.0f, viewport->Size.y * 0.3f);
+            ImGui::SetCursorPos(ImVec2(std::max(0.0f, (viewport->Size.x - titleSize.x) * 0.5f), startY));
+            ImGui::TextUnformatted(kTitle);
+            ImGui::SetWindowFontScale(1.0f);
+            const float wrapWidth = std::min(viewport->Size.x - 48.0f, 640.0f);
+            ImGui::SetCursorPos(ImVec2((viewport->Size.x - wrapWidth) * 0.5f, startY + titleSize.y * 2.0f));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
+            ImGui::TextUnformatted(kCredit);
+            ImGui::PopTextWrapPos();
+            startY = ImGui::GetCursorPosY();
+            titleHeight = 0.0f;
+        }
+        const ImVec2 titleSize{0.0f, titleHeight};
+        if (!gameFonts && shaderLine[0] != '\0') {
+            ImGui::SetWindowFontScale(0.9f);
+            const float lineX = std::max(0.0f, (viewport->Size.x - ImGui::CalcTextSize(shaderLine).x) * 0.5f);
             ImGui::SetCursorPos(ImVec2(lineX, startY + titleSize.y * 1.8f));
-            ImGui::TextUnformatted(line);
+            ImGui::TextUnformatted(shaderLine);
         }
     }
     ImGui::End();
