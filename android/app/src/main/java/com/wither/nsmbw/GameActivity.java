@@ -229,6 +229,7 @@ public final class GameActivity extends SDLActivity
         final java.util.List<String> items = new java.util.ArrayList<>();
         items.add("Display");
         items.add("Controls");
+        items.add("Tailscale & LAN Devices");
         if (inSession) items.add("Leave LAN Game");
         if (settings.skipStartMenu()) items.add("Start Menu");
         items.add("Quit Game");
@@ -238,6 +239,7 @@ public final class GameActivity extends SDLActivity
                     final String item = items.get(which);
                     if (item.equals("Display")) showDisplayMenu();
                     else if (item.equals("Controls")) showControlsMenu();
+                    else if (item.equals("Tailscale & LAN Devices")) DevicesDialog.show(this);
                     else if (item.equals("Leave LAN Game")) leaveSession();
                     else if (item.equals("Start Menu")) openStartMenu(inSession);
                     else finish();
