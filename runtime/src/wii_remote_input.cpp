@@ -69,19 +69,23 @@ constexpr uint32_t kWpadLeft = 0x0001, kWpadRight = 0x0002, kWpadDown = 0x0004, 
                    kWpadMinus = 0x1000, kWpadZ = 0x2000, kWpadC = 0x4000, kWpadHome = 0x8000;
 
 // NSMBW bring-up: scripted Wii Remote input for automated runs without a remote.
-// NSMBW_INPUT_SCRIPT="5000:A:200,9000:A+TWO:150" holds the named buttons on channel 1 for <duration>
-// ms (default 150) starting <time> ms after the game's first input read. While the variable is set,
-// channel 1 reports a connected Wii Remote at rest. Buttons: A B ONE TWO PLUS MINUS HOME UP DOWN
-// LEFT RIGHT (also 1 and 2).
+// NSMBW_INPUT_SCRIPT="5000:A:200,9000:A+TWO:150:2" holds the named buttons for <duration> ms
+// (default 150) starting <time> ms after the game's first input read (in deterministic mode: after
+// boot, on the virtual clock), on channel 1 or the channel given as a fourth field. While the
+// variable is set, channel 1 (and channels up to NSMBW_SCRIPT_REMOTES, default 1) report a connected
+// Wii Remote at rest. Buttons: A B ONE TWO PLUS MINUS HOME UP DOWN LEFT RIGHT (also 1 and 2); the
+// D-pad names are the remote's own, so held sideways RIGHT is screen up and DOWN is screen right.
 struct ScriptEvent {
     uint64_t startMs = 0;
     uint64_t endMs = 0;
     uint32_t bits = 0;
+    uint32_t chan = 0;
     std::string text;
 };
 
 struct InputScript {
     bool active = false;
+    uint32_t remotes = 1;
     std::vector<ScriptEvent> events;
 };
 
@@ -108,6 +112,9 @@ const InputScript& Script() {
             return parsed;
         }
         parsed.active = true;
+        if (const char* remotes = std::getenv("NSMBW_SCRIPT_REMOTES"); remotes != nullptr) {
+            parsed.remotes = std::clamp<uint32_t>(static_cast<uint32_t>(std::strtoul(remotes, nullptr, 10)), 1u, 4u);
+        }
         const std::string all(text);
         size_t pos = 0;
         while (pos < all.size()) {
@@ -116,11 +123,17 @@ const InputScript& Script() {
             const size_t c1 = item.find(':');
             if (c1 != std::string::npos) {
                 const size_t c2 = item.find(':', c1 + 1);
+                const size_t c3 = c2 == std::string::npos ? std::string::npos : item.find(':', c2 + 1);
                 ScriptEvent event;
                 event.text = item;
                 event.startMs = std::strtoull(item.substr(0, c1).c_str(), nullptr, 10);
                 const std::string buttons = item.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
                 const uint64_t duration = c2 == std::string::npos ? 150 : std::strtoull(item.substr(c2 + 1).c_str(), nullptr, 10);
+                if (c3 != std::string::npos) {
+                    const uint32_t chan = static_cast<uint32_t>(std::strtoul(item.substr(c3 + 1).c_str(), nullptr, 10));
+                    event.chan = chan >= 1 && chan <= 4 ? chan - 1 : 0;
+                    parsed.remotes = std::max(parsed.remotes, event.chan + 1);
+                }
                 event.endMs = event.startMs + duration;
                 size_t b = 0;
                 while (b <= buttons.size()) {
@@ -144,7 +157,7 @@ const InputScript& Script() {
 
 bool ScriptedSample(uint32_t chan, KpadSample& sample) {
     const InputScript& script = Script();
-    if (!script.active || chan != 0) {
+    if (!script.active || chan >= script.remotes) {
         return false;
     }
     // Deterministic mode times the script on the virtual timeline, so a run replays identically.
@@ -158,7 +171,7 @@ bool ScriptedSample(uint32_t chan, KpadSample& sample) {
     sample.acc[1] = -1.0f;  // at rest, KPAD frame
     for (size_t i = 0; i < script.events.size(); ++i) {
         const ScriptEvent& event = script.events[i];
-        if (now >= event.startMs && now < event.endMs) {
+        if (event.chan == chan && now >= event.startMs && now < event.endMs) {
             sample.hold |= event.bits;
             if (!announced[i]) {
                 announced[i] = true;
@@ -696,7 +709,7 @@ static Kind RealKind(uint32_t chan) {
 // gamepad stands in for one there (VirtualRemote).
 Kind EffectiveKind(uint32_t chan) {
     if (chan >= PAD_MAX_CONTROLLERS) return Kind::NotWii;
-    if (chan == 0 && Script().active) return Kind::Remote;  // NSMBW bring-up scripted remote
+    if (Script().active && chan < Script().remotes) return Kind::Remote;  // NSMBW bring-up scripted remotes
     const Kind real = RealKind(chan);
     if (IsKpadKind(real)) return real;
     return VirtualRemote::Present(chan) ? Kind::Remote : real;

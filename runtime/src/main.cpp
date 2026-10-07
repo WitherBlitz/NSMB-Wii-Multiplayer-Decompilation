@@ -59,6 +59,7 @@
 #include <sys/system_properties.h>
 #endif
 
+#include "netplay_session.h"
 #include "frame_input.h"
 #include "det_clock.h"
 #include "abi_bridge.h"
@@ -1371,6 +1372,11 @@ int RuntimeMain(int argc, char** argv) {
         if (const char* deterministic = std::getenv("NSMBW_DETERMINISTIC");
             deterministic != nullptr && std::string(deterministic) == "1") {
             DetClock::Enable();
+        }
+        // Network play: the session settings turn deterministic mode on and feed every frame's
+        // input from all players (netplay_session.h).
+        if (NetplaySession::Config netplay; NetplaySession::LoadConfigFromEnvironment(netplay)) {
+            NetplaySession::Start(netplay);
         }
         if (RuntimeConfigFile::DiscordPresenceEnabled()) {
             DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Kart Wii");
