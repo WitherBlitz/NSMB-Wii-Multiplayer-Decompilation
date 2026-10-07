@@ -28,6 +28,11 @@ Claude Opus 5.5.**
 
 [I just want to play](#installing)
 
+<p align="center">
+  <img src="docs/screenshots/android-title.webp" alt="New Super Mario Bros. Wii running natively on an Android phone, with the on-screen Wii Remote controls" width="800">
+  <br><sub>Running natively on Android at 60 fps, with the on-screen sideways Wii Remote.</sub>
+</p>
+
 ---
 
 ## What it does
@@ -149,6 +154,11 @@ page:
 A game controller also works on Windows as a sideways Wii Remote.
 
 ## LAN and Tailscale multiplayer
+
+<p align="center">
+  <img src="docs/screenshots/windows-lan-or-couch.png" alt="The LAN or Couch? window on the Select a File screen, on Windows" width="640">
+  <br><sub>"LAN or Couch?" on the save file screen (Windows), drawn in the game's own style.</sub>
+</p>
 
 Up to 4 players, on any mix of phones and PCs. Every player needs their own game files.
 
