@@ -164,7 +164,23 @@ inline std::filesystem::path CreateManagedNandRoot() {
     return root;
 }
 
+// Network play boots every device from a NAND of its own (netplay_start.h): the host's save on top
+// of the runtime's standard seeds, so all of them read the same bytes.
+inline std::filesystem::path& NandRootOverride() {
+    static std::filesystem::path path;
+    return path;
+}
+
 inline std::filesystem::path ResolveNandRootPath() {
+    if (const auto& override = NandRootOverride(); !override.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(override, ec);
+        if (!SeedMissingBootstrapFiles(override)) {
+            RT_LOG(RT_TAG_NAND) << "first-run WC24 seeding failed for the network play NAND" << std::endl;
+        }
+        RT_LOG(RT_TAG_NAND) << "using the network play NAND: " << RuntimeConfigFile::PathToUtf8(override) << std::endl;
+        return override;
+    }
     const std::string configPath = RuntimeConfigFile::NandRoot();
     if (!configPath.empty()) {
         const auto path = ResolveConfiguredPath(configPath);

@@ -2,6 +2,7 @@
 
 #include "det_clock.h"
 #include "input_bindings.h"
+#include "netplay_ui.h"
 
 namespace FrameInput {
 namespace {
@@ -31,6 +32,7 @@ Frame SampleLocal() {
             remote = {};
             continue;
         }
+        NetplayUi::FilterGameInput(chan, remote.sample);
         if (blocked) {
             // The settings overlay owns input: buttons and sticks at rest, the remote still there.
             const WiiRemoteInput::KpadSample held = remote.sample;

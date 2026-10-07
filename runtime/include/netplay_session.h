@@ -23,6 +23,10 @@ struct Config {
     uint32_t inputDelay = 3;   // frames between sampling a controller and that input taking effect
     uint16_t port = 0;         // local UDP port; 0 = the default port (any free one for clients)
     std::string host;          // clients: the host's "ip[:port]" or name
+    // After a restart from a room: drive player 1 from the title through the file select and the
+    // player count (every device does the same, from the game's own state).
+    bool autopilot = false;
+    int saveFile = 0;
 };
 
 // NSMBW_NETPLAY="id=<n>;slot=<n>;players=<n>;delay=<n>;port=<n>;host=<ip:port>" (testing), or

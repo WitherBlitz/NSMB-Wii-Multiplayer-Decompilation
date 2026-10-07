@@ -1,3 +1,4 @@
+#include "netplay_session.h"
 #include "timebase_contract.h"
 #include "det_clock.h"
 #include "wii_remote_input.h"
@@ -107,7 +108,9 @@ uint32_t ScriptButtonBit(const std::string& name) {
 const InputScript& Script() {
     static const InputScript script = [] {
         InputScript parsed;
-        const char* text = std::getenv("NSMBW_INPUT_SCRIPT");
+        // A network session (after the restart out of a room) has a script of its own, so a test
+        // can drive the menus before the restart and the game after it.
+        const char* text = std::getenv(NetplaySession::Active() ? "NSMBW_SESSION_SCRIPT" : "NSMBW_INPUT_SCRIPT");
         if (text == nullptr || *text == '\0') {
             return parsed;
         }

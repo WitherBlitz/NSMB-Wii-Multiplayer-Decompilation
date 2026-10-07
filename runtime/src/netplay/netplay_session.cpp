@@ -1,3 +1,4 @@
+#include "netplay/game_menus.h"
 #include "netplay_session.h"
 
 #include "det_clock.h"
@@ -519,6 +520,71 @@ uint64_t HashSlice(uint32_t frame) {
     return hash;
 }
 
+// After a restart every device boots to the title. Until the host's player count is picked, player
+// 1's input comes from here instead of the host's remote, on every device alike (it reads nothing
+// but the game's own state, which is the same everywhere): the title, the host's file, the number of
+// players. The other remotes stay at rest until then; afterwards everyone plays.
+struct Autopilot {
+    bool active = false;
+    int saveFile = 0;
+    uint32_t pulse = 0;           // the buttons this press holds
+    bool confirmedCount = false;  // 2 went in on the right number of players
+    uint32_t doneAt = 0;
+};
+Autopilot g_autopilot;
+
+constexpr uint32_t kWpadScreenLeft = 0x0008, kWpadScreenRight = 0x0004, kWpadScreenDown = 0x0001, kWpadTwo = 0x0100;
+
+// Player 1's buttons this frame, or false once the autopilot is done. It presses like a person: a
+// press every 20 frames, held for 4, chosen from what is on screen when the press starts, and
+// keeps pressing until the screen has moved on (a press during a menu animation is ignored).
+bool AutopilotButtons(uint32_t frame, uint8_t players, uint32_t& buttons) {
+    Autopilot& a = g_autopilot;
+    if (!a.active) {
+        return false;
+    }
+    buttons = 0;
+    const GameMenus::SelectPlayers selectPlayers = GameMenus::SelectPlayersState();
+    if (a.doneAt == 0 && a.confirmedCount &&
+        (selectPlayers == GameMenus::SelectPlayers::Leaving || selectPlayers == GameMenus::SelectPlayers::Hidden)) {
+        a.doneAt = frame + 30;  // the number went in: hand over once the screen is gone
+    }
+    if (a.doneAt != 0) {
+        if (frame >= a.doneAt) {
+            a.active = false;
+            RT_LOGF(RT_TAG_RUNTIME, "netplay: player count picked; everyone has their remote now\n");
+            return false;
+        }
+        return true;
+    }
+    if (frame % 20 == 0) {
+        a.pulse = 0;
+        if (selectPlayers == GameMenus::SelectPlayers::Choosing) {
+            if (GameMenus::SelectPlayersSettled()) {
+                const int cursor = GameMenus::SelectPlayersCursor();
+                const int target = players - 1;
+                if (cursor == target) {
+                    a.pulse = kWpadTwo;
+                    a.confirmedCount = true;
+                } else if (cursor == 0) {
+                    a.pulse = kWpadScreenDown;
+                } else {
+                    a.pulse = cursor < target ? kWpadScreenRight : kWpadScreenLeft;
+                }
+            }
+        } else if (selectPlayers == GameMenus::SelectPlayers::Hidden) {
+            if (GameMenus::FileSelectWaiting()) {
+                const int cursor = GameMenus::FileSelectCursor();
+                a.pulse = cursor == a.saveFile ? kWpadTwo : cursor < a.saveFile ? kWpadScreenRight : kWpadScreenLeft;
+            } else if (GameMenus::CurrentScene() != 0x00A) {
+                a.pulse = kWpadTwo;  // the title ("Press 2") and everything before it
+            }
+        }
+    }
+    buttons = frame % 20 < 4 ? a.pulse : 0;
+    return true;
+}
+
 // The FrameInput source: sample this device's controller for frame retrace + delay, then wait for
 // every player's input for this frame.
 void FrameSource(uint32_t retrace, FrameInput::Frame& frame) {
@@ -593,6 +659,18 @@ void FrameSource(uint32_t retrace, FrameInput::Frame& frame) {
         remote.sample.hasNunchuk = record.connected && record.kind == 1;
         remote.sample.hasClassic = record.connected && record.kind == 2;
     }
+    uint32_t autopilot = 0;
+    if (AutopilotButtons(retrace, s.config.playerCount, autopilot)) {
+        for (uint32_t chan = 0; chan < s.config.playerCount && chan < frame.size(); ++chan) {
+            FrameInput::Remote& remote = frame[chan];
+            remote.connected = true;
+            remote.kind = WiiRemoteInput::Kind::Remote;
+            remote.sample = Neutral().sample;
+            if (chan == 0) {
+                remote.sample.hold = autopilot;
+            }
+        }
+    }
     lock.unlock();
     if (waited) {
         // Don't race to catch up after a wait: that only puts this device ahead again.
@@ -643,6 +721,8 @@ bool LoadConfigFromEnvironment(Config& out) {
     }
     config.port = static_cast<uint16_t>(std::strtoul(Field(text, "port").c_str(), nullptr, 10));
     config.host = Field(text, "host");
+    config.autopilot = Field(text, "autopilot") == "1";
+    config.saveFile = static_cast<int>(std::strtol(Field(text, "file").c_str(), nullptr, 10));
     if (config.sessionId == 0 || config.playerCount < 2 || config.playerCount > kMaxSlots ||
         config.localSlot >= config.playerCount || config.inputDelay < 1 || config.inputDelay > 30 ||
         (config.localSlot != 0 && config.host.empty())) {
@@ -665,7 +745,13 @@ bool Start(const Config& config) {
         return false;
     }
     const uint16_t port = config.port != 0 ? config.port : s->IsHost() ? Netplay::kDefaultPort : 0;
-    if (!s->socket.Open(port) && !(port != 0 && !s->IsHost() && s->socket.Open(0))) {
+    // Right after a restart the old process may still hold the port for a moment.
+    bool opened = s->socket.Open(port);
+    for (int attempt = 0; !opened && port != 0 && attempt < 30; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        opened = s->socket.Open(port);
+    }
+    if (!opened && !(port != 0 && !s->IsHost() && s->socket.Open(0))) {
         RT_LOGF(RT_TAG_RUNTIME, "netplay: cannot open UDP port %u\n", port);
         delete s;
         return false;
@@ -675,6 +761,8 @@ bool Start(const Config& config) {
         s->slots[slot].contiguous = config.inputDelay - 1;
     }
     g_session = s;
+    g_autopilot.active = config.autopilot;
+    g_autopilot.saveFile = config.saveFile;
     DetClock::Enable();
     FrameInput::SetSource(&FrameSource);
     s->thread = std::thread(NetworkThread, s);

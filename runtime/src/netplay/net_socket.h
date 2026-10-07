@@ -53,6 +53,7 @@ public:
 private:
     intptr_t m_socket = -1;
     uint16_t m_port = 0;
+    bool m_bound = false;
 };
 
 struct LocalInterface {

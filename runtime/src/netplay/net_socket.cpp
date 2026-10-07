@@ -4,7 +4,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -178,6 +180,16 @@ bool UdpSocket::Open(uint16_t port) {
 #else
     fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK);
 #endif
+#ifdef _WIN32
+    // Any port: leave the socket unbound and let the first send pick one. An explicit bind makes
+    // Windows Firewall ask about letting the game accept connections, which only a host needs.
+    if (port == 0) {
+        m_socket = static_cast<intptr_t>(s);
+        m_port = 0;
+        m_bound = false;
+        return true;
+    }
+#endif
     sockaddr_in local{};
     local.sin_family = AF_INET;
     local.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -191,6 +203,7 @@ bool UdpSocket::Open(uint16_t port) {
     getsockname(s, reinterpret_cast<sockaddr*>(&bound), &length);
     m_socket = static_cast<intptr_t>(s);
     m_port = ntohs(bound.sin_port);
+    m_bound = true;
     return true;
 }
 
@@ -199,6 +212,7 @@ void UdpSocket::Close() {
         CloseNative(Native(m_socket));
         m_socket = -1;
         m_port = 0;
+        m_bound = false;
     }
 }
 
@@ -213,12 +227,27 @@ bool UdpSocket::SendTo(const Address& to, const void* data, size_t size) {
     const sockaddr_in target = ToSockaddr(to);
     const auto sent = ::sendto(Native(m_socket), static_cast<const char*>(data), static_cast<int>(size), 0,
                                reinterpret_cast<const sockaddr*>(&target), sizeof(target));
+    if (!m_bound && sent >= 0) {
+        // The first send bound the socket to a port of the system's choosing.
+        sockaddr_in bound{};
+        socklen_t length = sizeof(bound);
+        getsockname(Native(m_socket), reinterpret_cast<sockaddr*>(&bound), &length);
+        m_port = ntohs(bound.sin_port);
+        m_bound = true;
+    }
     return sent == static_cast<decltype(sent)>(size);
 }
 
 int UdpSocket::ReceiveFrom(Address& from, void* buffer, size_t capacity, int timeoutMs) {
     if (!IsOpen()) {
         return -1;
+    }
+    if (!m_bound) {
+        // Nothing can arrive before the first send gives the socket a port.
+        if (timeoutMs > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+        }
+        return 0;
     }
     if (timeoutMs > 0) {
 #ifdef _WIN32

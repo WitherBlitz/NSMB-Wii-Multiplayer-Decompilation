@@ -1,3 +1,4 @@
+#include "netplay_ui.h"
 #include "settings_overlay.h"
 #include "audio_backend.h"
 #include "aurora_events.h"
@@ -1586,6 +1587,7 @@ void Draw() noexcept {
     if (!StartupScreenVisible()) {
         DrawShaderCompilationStatus();
     }
+    NetplayUi::Draw();
     DrawFpsOverlay();
     DrawTopBar();
     DrawExitPrompt();

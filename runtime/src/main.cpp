@@ -59,6 +59,7 @@
 #include <sys/system_properties.h>
 #endif
 
+#include "netplay_start.h"
 #include "netplay_session.h"
 #include "frame_input.h"
 #include "det_clock.h"
@@ -1367,6 +1368,9 @@ int RuntimeMain(int argc, char** argv) {
             if (!script.empty()) {
                 setenv("NSMBW_INPUT_SCRIPT", script.c_str(), 1);
             }
+            if (const std::string session = property("debug.nsmbw.sscript"); !session.empty()) {
+                setenv("NSMBW_SESSION_SCRIPT", session.c_str(), 1);
+            }
         }
 #endif
         if (const char* deterministic = std::getenv("NSMBW_DETERMINISTIC");
@@ -1375,8 +1379,18 @@ int RuntimeMain(int argc, char** argv) {
         }
         // Network play: the session settings turn deterministic mode on and feed every frame's
         // input from all players (netplay_session.h).
-        if (NetplaySession::Config netplay; NetplaySession::LoadConfigFromEnvironment(netplay)) {
-            NetplaySession::Start(netplay);
+        // A restart out of a LAN room lands here: the session file names the players, and the NAND
+        // switches to the session's copy of the host's save before anything reads it.
+        {
+            NetplaySession::Config netplay;
+            int saveFile = 0;
+            if (NetplayStart::TakePendingSession(netplay, saveFile)) {
+                netplay.autopilot = true;
+                netplay.saveFile = saveFile;
+                NetplaySession::Start(netplay);
+            } else if (NetplaySession::LoadConfigFromEnvironment(netplay)) {
+                NetplaySession::Start(netplay);
+            }
         }
         if (RuntimeConfigFile::DiscordPresenceEnabled()) {
             DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Kart Wii");

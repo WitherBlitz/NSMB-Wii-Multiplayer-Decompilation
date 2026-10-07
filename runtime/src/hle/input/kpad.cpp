@@ -1,3 +1,4 @@
+#include "netplay_ui.h"
 #include "frame_input.h"
 #include "hle_stubs.h"
 #include "input_bindings.h"
@@ -255,6 +256,7 @@ bool ReadSample(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
     if (!WiiRemoteInput::ReadKpadSample(chan, sample)) {
         return false;
     }
+    NetplayUi::FilterGameInput(chan, sample);
     if (InputBindings::InputBlocked()) {
         sample.hold = 0;
         sample.clHold = 0;
