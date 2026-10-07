@@ -132,9 +132,15 @@ uint32_t SetThreadEffectivePriority(uint32_t threadPtr, int32_t priority);
 void CancelSleepTimer(uint32_t threadPtr);
 void ClearOutstandingPark(uint32_t threadPtr);
 bool ProcessSleepTimers(CpuContext* cpu);
+// Deterministic mode: the virtual tick at which the earliest sleep timer comes due (DetClock::kNever
+// if none is armed).
+uint64_t NextSleepTimerTicks();
 
 // Defined in os_alarm.cpp.
 bool ProcessAlarmQueue(CpuContext* cpu, int maxToProcess);
+// Deterministic mode: the virtual tick at which the head of the OS alarm queue fires, or
+// DetClock::kNever for an empty queue.
+uint64_t NextAlarmTicks();
 
 // Defined in os_time.cpp.
 uint64_t ReadSystemTime();

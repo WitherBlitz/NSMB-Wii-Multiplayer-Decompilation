@@ -1,3 +1,5 @@
+#include "timebase_contract.h"
+#include "det_clock.h"
 #include "memory.h"
 #include "guest_interrupt_context.h"
 #include "hle_stubs.h"
@@ -40,6 +42,10 @@ struct AIDmaState {
     uint32_t sampleRate = kDefaultSampleRate;
     uint32_t bytesLeft = 0;
     double accumulatorSeconds = 0.0;
+    // Deterministic mode: the virtual tick at which the DMA block in flight completes (0 = no
+    // block started yet). Integer ticks, not the floating accumulator, so every device delivers each
+    // block at exactly the same point.
+    uint64_t detBlockDueTicks = 0;
     bool tickActive = false;
     bool loggedBackendFailure = false;
     bool loggedMissingCallback = false;
@@ -168,6 +174,7 @@ extern "C" void OSStopAudioSystem_801A1520()
         g_ai.registerStartAddr = 0;
         g_ai.bytesLeft = 0;
         g_ai.accumulatorSeconds = 0.0;
+        g_ai.detBlockDueTicks = 0;
     }
     AxDspHle::Stop();
 }
@@ -298,6 +305,7 @@ extern "C" void AIStartDMA_80124048()
         g_ai.sampleRate = rate;
         g_ai.enabled = true;
         g_ai.bytesLeft = g_ai.length;
+        g_ai.detBlockDueTicks = 0;
     }
     if (!EnsureAudioBackend(rate)) {
         ReportAudioProblem("AIStartDMA", "audio backend init failed");
@@ -543,14 +551,139 @@ int64_t ConsumeAudioPollDeltaMicros()
 
 } // namespace
 
+namespace {
+
+// One DMA block's length on the virtual timeline: 0x180 bytes of 32 kHz stereo (3 ms) is exactly
+// 182250 ticks.
+uint64_t DetBlockTicks(uint32_t length, uint32_t sampleRate)
+{
+    const uint64_t bytesPerSecond = static_cast<uint64_t>(sampleRate) * kAudioChannels * kBytesPerSample;
+    return bytesPerSecond == 0 ? 0 : static_cast<uint64_t>(length) * TimeBaseContract::kTicksPerSecond / bytesPerSecond;
+}
+
+// Deterministic counterpart of Audio_HLE_Tick: delivers every block whose virtual completion time
+// has passed, in the same order (mix join, output push, AI DMA callback, deferred AX callbacks).
+void AudioTickDeterministic(CpuContext* ctx)
+{
+    uint32_t startAddr = 0;
+    uint32_t length = 0;
+    uint32_t callback = 0;
+    uint32_t sampleRate = kDefaultSampleRate;
+    {
+        std::lock_guard<std::mutex> lock(g_ai.mutex);
+        if (!g_ai.enabled || g_ai.startAddr == 0 || g_ai.length == 0 || g_ai.sampleRate == 0 || g_ai.tickActive) {
+            return;
+        }
+        startAddr = g_ai.startAddr;
+        length = g_ai.length;
+        callback = g_ai.callback;
+        sampleRate = g_ai.sampleRate;
+        const uint64_t blockTicks = DetBlockTicks(length, sampleRate);
+        if (blockTicks == 0) {
+            return;
+        }
+        if (g_ai.detBlockDueTicks == 0) {
+            g_ai.detBlockDueTicks = DetClock::Now() + blockTicks;
+        }
+        if (DetClock::Now() < g_ai.detBlockDueTicks) {
+            return;
+        }
+        g_ai.tickActive = true;
+    }
+
+    struct ActiveTickReset {
+        ~ActiveTickReset()
+        {
+            std::lock_guard<std::mutex> lock(g_ai.mutex);
+            g_ai.tickActive = false;
+        }
+    } activeTickReset;
+
+    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+    CpuContextScope scope(cpu);
+
+    for (int blocksCompleted = 0; blocksCompleted < kMaxBlocksPerTick; ++blocksCompleted) {
+        {
+            std::lock_guard<std::mutex> lock(g_ai.mutex);
+            if (DetClock::Now() < g_ai.detBlockDueTicks) {
+                break;
+            }
+            g_ai.detBlockDueTicks += DetBlockTicks(length, sampleRate);
+            g_ai.bytesLeft = 0;
+        }
+
+        AxDspHle::JoinMixWorker();
+        if (EnsureAudioBackend(sampleRate) && !PushAudioBlock(startAddr, length)) {
+            std::lock_guard<std::mutex> lock(g_ai.mutex);
+            if (!g_ai.loggedAccessFailure) {
+                g_ai.loggedAccessFailure = true;
+                ReportAudioProblem("Audio", "failed to read DMA buffer; disabling audio DMA");
+            }
+            g_ai.enabled = false;
+            return;
+        }
+
+        if (callback != 0) {
+            const auto* info = TranslatedFunctionRegistry::FindByAddressPtr(callback);
+            if (info && info->rawCpuInvoker) {
+                Memory::TryWrite32(kAICallbackBusyAddr, 1);
+                InvokeIndirectCpu(callback, cpu);
+                Memory::TryWrite32(kAICallbackBusyAddr, 0);
+                AxDspHle::ServiceDeferredCallbacks();
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(g_ai.mutex);
+        startAddr = g_ai.startAddr;
+        length = g_ai.length;
+        callback = g_ai.callback;
+        sampleRate = g_ai.sampleRate;
+        g_ai.bytesLeft = g_ai.length;
+        if (!g_ai.enabled || startAddr == 0 || length == 0 || DetBlockTicks(length, sampleRate) == 0) {
+            break;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_ai.mutex);
+    const uint64_t blockTicks = DetBlockTicks(g_ai.length, g_ai.sampleRate);
+    const uint64_t now = DetClock::Now();
+    if (blockTicks != 0 && g_ai.detBlockDueTicks > now) {
+        // The guest polls AIGetDMABytesLeft to size its work; report what is left of this block.
+        const uint64_t remaining = std::min<uint64_t>(g_ai.detBlockDueTicks - now, blockTicks);
+        g_ai.bytesLeft = static_cast<uint32_t>(remaining * g_ai.length / blockTicks) & ~0x1Fu;
+    }
+}
+
+} // namespace
+
+uint64_t Audio_HLE_DetNextEventTicks()
+{
+    std::lock_guard<std::mutex> lock(g_ai.mutex);
+    if (!g_ai.enabled || g_ai.startAddr == 0 || g_ai.length == 0 || g_ai.sampleRate == 0) {
+        return DetClock::kNever;
+    }
+    if (g_ai.detBlockDueTicks == 0) {
+        return DetClock::Now();  // not armed yet: the next poll arms it
+    }
+    return g_ai.detBlockDueTicks;
+}
+
 void Audio_HLE_Poll(CpuContext* ctx)
 {
     MusicAttenuation::TickGuest();
+    if (DetClock::Enabled()) {
+        AudioTickDeterministic(ctx);
+        return;
+    }
     Audio_HLE_Tick(ctx, static_cast<uint32_t>(ConsumeAudioPollDeltaMicros()));
 }
 
 void Audio_HLE_PollDeferred()
 {
+    // A wall-clock pump; deterministic mode delivers audio blocks only from the scheduler.
+    if (DetClock::Enabled()) {
+        return;
+    }
     if (!OS_HLE_InterruptsEnabled()) {
         // Leave the elapsed interval unconsumed so the next poll still sees it.
         return;

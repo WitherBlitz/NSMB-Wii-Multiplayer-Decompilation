@@ -1,3 +1,4 @@
+#include "frame_input.h"
 #include "hle_stubs.h"
 #include "memory.h"
 #include "hle/controller_status_contract.h"
@@ -118,6 +119,18 @@ extern "C" int32_t WPADProbe_HLE(uint32_t chan, uint32_t typePtr)
     // Drive the rescan state machine here too: a reconnect probe can arrive
     // before the next PADRead, and only Poll() brings a dropped remote back.
     WiiRemoteInput::Poll();
+
+    if (FrameInput::Active()) {
+        // Deterministic mode: connections change only at frame boundaries, like the input itself.
+        const FrameInput::Remote& remote = FrameInput::Get(chan);
+        if (typePtr != 0) {
+            uint32_t type = WpadContract::kExtensionCore;
+            if (remote.connected && remote.kind == WiiRemoteInput::Kind::RemoteWithNunchuk) type = 1u;
+            if (remote.connected && remote.kind == WiiRemoteInput::Kind::RemoteWithClassic) type = 2u;
+            Memory::Write32(typePtr, type);
+        }
+        return remote.connected ? kStatusOk : WpadContract::kErrorNoController;
+    }
 
     // A real Bluetooth remote: WPAD_DEV_CORE (0) for a bare remote,
     // WPAD_DEV_FREESTYLE (1) with a Nunchuk, WPAD_DEV_CLASSIC (2) with a Classic

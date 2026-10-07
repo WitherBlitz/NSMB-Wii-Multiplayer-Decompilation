@@ -1,4 +1,5 @@
 // gx_vertex.cpp - Vertex Descriptor and Attribute Functions
+#include "det_clock.h"
 #include "gx_internal.h"
 #include "gx_stream_common.h"
 #include "fiber_manager.h"
@@ -242,7 +243,9 @@ thread_local bool g_inGxBeginOrFifo = false;
 thread_local std::chrono::steady_clock::time_point g_nextDeferredTimingPoll{};
 
 void ServiceDeferredTimingDuringGxWork() {
-    if (g_inGxBeginOrFifo) {
+    // Wall-clock driven, so where it lands in the guest's execution depends on host speed; the
+    // deterministic mode (det_clock.h) delivers these events only at their virtual time.
+    if (g_inGxBeginOrFifo || DetClock::Enabled()) {
         return;
     }
 

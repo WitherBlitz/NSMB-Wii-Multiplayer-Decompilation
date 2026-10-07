@@ -1,8 +1,11 @@
 // SelectThread scheduler, OSWakeupThread and the OSMutex primitives.
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 
+#include "timebase_contract.h"
+#include "det_clock.h"
 #include "abi_bridge.h"
 #include "memory.h"
 #include "hle_stubs.h"
@@ -92,6 +95,37 @@ void PromoteThreadPriority(uint32_t threadPtr, int32_t priority)
 
 extern "C" void OSWakeupThread_HLE_801aaaa4(CpuContext* ctx);
 extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
+
+// Deterministic idle (det_clock.h): deliver everything due at the current virtual instant, in a
+// fixed order, and if that made no thread runnable, wait for real time to reach the next event and
+// move the timeline there. Every device therefore wakes its threads at the same points.
+static void DeterministicIdleStep(CpuContext* cpu)
+{
+    ProcessSleepTimers(cpu);
+    Audio_HLE_Poll(cpu);
+    if (::Memory::Read32(kSchedulerPendingFlagAddr) != 0) {
+        return;
+    }
+    VI_HLE_PollRetrace(cpu);
+    ProcessAlarmQueue(cpu, 8);
+    if (::Memory::Read32(kSchedulerPendingFlagAddr) != 0) {
+        return;
+    }
+
+    const uint64_t now = DetClock::Now();
+    uint64_t next = std::min({VI_HLE_DetNextRetraceTicks(), Audio_HLE_DetNextEventTicks(), NextSleepTimerTicks(),
+                              NextAlarmTicks()});
+    // Before VIInit nothing may be scheduled yet: creep forward a millisecond at a time. An event
+    // that is due but could not be delivered this pass still moves time on by a tick.
+    constexpr uint64_t kMaxStep = TimeBaseContract::kTicksPerSecond / 1000;
+    if (next == DetClock::kNever) {
+        next = now + kMaxStep;
+    } else if (next <= now) {
+        next = now + 1;
+    }
+    DetClock::PaceTo(next);
+    DetClock::AdvanceTo(next);
+}
 
 static void TryInvokeSwitchCallback(uint32_t oldCtx, uint32_t newCtx, CpuContext* cpu)
 {
@@ -227,6 +261,10 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
             OS__EnableInterrupts_801a65c0();
 
             while (::Memory::Read32(kSchedulerPendingFlagAddr) == 0) {
+                if (DetClock::Enabled()) {
+                    DeterministicIdleStep(cpu);
+                    continue;
+                }
                 ProcessSleepTimers(cpu);
                 // Dolphin models DSP audio DMA as an independent 4 kHz timing
                 // event.  Poll it from the guest scheduler instead of batching

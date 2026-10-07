@@ -1,3 +1,4 @@
+#include "det_clock.h"
 #include "ppc_runtime.h"
 // ppc_runtime.h re-exports the rest of the ISA package; the CR tier is pulled in
 // by abi_bridge.h for generated code, so this TU asks for it directly.
@@ -45,6 +46,9 @@ bool g_hasReservation = false;
 const auto g_timeBaseStart = std::chrono::steady_clock::now();
 
 uint64_t GetTimeBase() {
+    if (DetClock::Enabled()) {
+        return DetClock::Now();
+    }
     const auto elapsed = std::chrono::steady_clock::now() - g_timeBaseStart;
     const auto nanoseconds =
         std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
@@ -400,6 +404,11 @@ extern "C" uint32_t PPC_Eciwx(uint32_t addr)
 
 extern "C" uint32_t PPC_Mftb()
 {
+    // The SDK reads the upper word, the lower one and the upper again; only the lower read steps the
+    // deterministic timeline, so a time-base poll loop advances it once per pass.
+    if (DetClock::Enabled()) {
+        return static_cast<uint32_t>(DetClock::ReadForGuest());
+    }
     return static_cast<uint32_t>(GetTimeBase());
 }
 

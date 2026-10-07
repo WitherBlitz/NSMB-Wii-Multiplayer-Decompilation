@@ -4,6 +4,7 @@
 #include <iostream>
 #include <mutex>
 
+#include "det_clock.h"
 #include "abi_bridge.h"
 #include "memory.h"
 #include "guest_interrupt_context.h"
@@ -250,6 +251,26 @@ bool ProcessAlarmQueue(CpuContext* cpu, int maxToProcess)
 }
 } // namespace OsHleInternal
 
+uint64_t OsHleInternal::NextAlarmTicks()
+{
+    const uint32_t queueBase = RuntimeConfig::SDA1_BASE - kAlarmQueueOffsetFromR13;
+    uint32_t head = 0;
+    uint32_t fireHi = 0;
+    uint32_t fireLo = 0;
+    uint32_t baseHi = 0;
+    uint32_t baseLo = 0;
+    if (!::Memory::TryRead32(queueBase, head) || head == 0 ||
+        !::Memory::TryRead32(head + kAlarmFireTimeHiOffset, fireHi) ||
+        !::Memory::TryRead32(head + kAlarmFireTimeLoOffset, fireLo) ||
+        !::Memory::TryRead32(0x800030D8u, baseHi) || !::Memory::TryRead32(0x800030DCu, baseLo)) {
+        return DetClock::kNever;
+    }
+    // Fire times are system time (time base plus the boot-time base word ReadSystemTime adds).
+    const uint64_t fireTime = (static_cast<uint64_t>(fireHi) << 32) | fireLo;
+    const uint64_t base = (static_cast<uint64_t>(baseHi) << 32) | baseLo;
+    return fireTime > base ? fireTime - base : 0;
+}
+
 extern "C" void OSSetAlarm_HLE_801a0870(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
@@ -360,7 +381,9 @@ extern "C" void OS_HLE_ProcessAlarms(int maxToProcess)
 
 extern "C" void OS_HLE_ProcessAlarmsDeferred(int maxToProcess)
 {
-    if (maxToProcess <= 0 || !OS_HLE_InterruptsEnabled()) {
+    // A wall-clock pump (GX work, host frame waits); in deterministic mode alarms fire only from the
+    // scheduler, at their virtual time.
+    if (maxToProcess <= 0 || !OS_HLE_InterruptsEnabled() || DetClock::Enabled()) {
         return;
     }
 

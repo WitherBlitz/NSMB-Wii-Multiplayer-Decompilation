@@ -1,3 +1,4 @@
+#include "det_clock.h"
 #include "display_settings.h"
 
 #include "memory.h"
@@ -124,7 +125,17 @@ float LinesForScale(float renderScale) {
     return renderScale > 0.0f ? kLinesPerScale * renderScale : 0.0f;
 }
 
-void Initialize(const Settings& settings) {
+// Deterministic mode (network play) keeps every device on the same 16:9 canvas: how wide the game
+// draws decides which enemies it wakes, so Fill's screen-dependent width would desync the session.
+Settings Lockstep(Settings settings) {
+    if (DetClock::Enabled()) {
+        settings.aspect = kAspect16x9;
+    }
+    return settings;
+}
+
+void Initialize(const Settings& requested) {
+    const Settings settings = Lockstep(requested);
     std::lock_guard<std::mutex> lock(g_mutex);
     g_current = settings;
     g_bootWidescreen = settings.aspect != kAspect4x3;
@@ -133,7 +144,7 @@ void Initialize(const Settings& settings) {
 
 void Request(const Settings& settings) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_pending = settings;
+    g_pending = Lockstep(settings);
     g_hasPending = true;
 }
 

@@ -1,3 +1,7 @@
+#include "frame_input.h"
+#include "det_hash.h"
+#include "timebase_contract.h"
+#include "det_clock.h"
 #include "hle_stubs.h"
 #include "memory.h"
 #include "abi_bridge.h"
@@ -102,6 +106,9 @@ struct ViState {
     bool fieldOdd = false;
     Clock::time_point lastRetrace = Clock::now();
     std::chrono::microseconds retraceInterval{16666us}; // ~60 Hz
+    // Deterministic mode: the virtual tick of the last retrace (see det_clock.h); lastRetrace above
+    // keeps real time for presentation only.
+    uint64_t detLastRetraceTicks = 0;
     bool hasValidXfb = false; // True once we've received at least one GXCopyDisp
     uint32_t readyXfb = 0;    // XFB address from the most recent GXCopyDisp
 
@@ -237,6 +244,11 @@ void WriteGuestStateLocked() {
     }
 }
 
+uint64_t IntervalTicks(std::chrono::microseconds interval) {
+    return TimeBaseContract::NanosecondsToTicks(
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(interval).count()));
+}
+
 void EnsureInitializedLocked() {
     if (g_vi.initialized) {
         return;
@@ -244,6 +256,7 @@ void EnsureInitializedLocked() {
     g_vi.initialized = true;
     g_vi.retraceInterval = IntervalForFormat(g_vi.tvFormat);
     g_vi.lastRetrace = Clock::now();
+    g_vi.detLastRetraceTicks = DetClock::Now();
     WriteGuestStateLocked();
 }
 
@@ -425,6 +438,13 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
         WriteGuestStateLocked();
     }
 
+    // Deterministic mode: this retrace starts a frame. Fingerprint guest memory as the previous
+    // frame left it, then latch every channel's input for the new one before any guest code reads it.
+    if (DetClock::Enabled()) {
+        DetHash::OnRetrace(retraceValue);
+        FrameInput::Latch(retraceValue);
+    }
+
     // Wake up threads sleeping on the VI retrace queue (VIWaitForRetrace).
     // The retrace count has been incremented and written to guest memory.
     if (ctx) {
@@ -506,6 +526,25 @@ bool AdvanceDueRetraces(CpuContext* ctx, int maxToProcess, bool serviceAurora)
 {
     bool advancedAny = false;
 
+    if (DetClock::Enabled()) {
+        for (int catchUpCount = 0; catchUpCount < maxToProcess; ++catchUpCount) {
+            {
+                std::lock_guard<std::mutex> lock(g_viMutex);
+                if (!g_vi.initialized) {
+                    return advancedAny;
+                }
+                const uint64_t due = g_vi.detLastRetraceTicks + IntervalTicks(g_vi.retraceInterval);
+                if (DetClock::Now() < due) {
+                    return advancedAny;
+                }
+                g_vi.detLastRetraceTicks = due;
+            }
+            AdvanceRetrace(ctx, Clock::now(), serviceAurora);
+            advancedAny = true;
+        }
+        return advancedAny;
+    }
+
     for (int catchUpCount = 0; catchUpCount < maxToProcess; ++catchUpCount) {
         Clock::time_point target;
         auto now = Clock::now();
@@ -554,7 +593,9 @@ void VI_HLE_PollRetrace(CpuContext* ctx) {
 }
 
 void VI_HLE_ProcessRetracesDeferred(int maxToProcess) {
-    if (maxToProcess <= 0 || !OS_HLE_InterruptsEnabled()) {
+    // A wall-clock pump (GX work, host frame waits); deterministic mode delivers retraces only from
+    // the scheduler and the guest's own VI calls.
+    if (maxToProcess <= 0 || !OS_HLE_InterruptsEnabled() || DetClock::Enabled()) {
         return;
     }
 
@@ -576,6 +617,14 @@ void VI_HLE_ProcessRetracesDeferred(int maxToProcess) {
         throw;
     }
     OS_HLE_EndDeferredGuestCallbacks();
+}
+
+uint64_t VI_HLE_DetNextRetraceTicks() {
+    std::lock_guard<std::mutex> lock(g_viMutex);
+    if (!g_vi.initialized) {
+        return DetClock::kNever;
+    }
+    return g_vi.detLastRetraceTicks + IntervalTicks(g_vi.retraceInterval);
 }
 
 void VI_HLE_WaitForNextRetracePoll() {
@@ -662,6 +711,11 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
     }
     Clock::time_point paceDeadline{};
     bool paceThisFrame = false;
+    // Deterministic mode paces in the scheduler's idle wait instead, and must not deliver the
+    // retrace from here (PaceToRetraceBoundary does), so frames present as soon as they are sealed.
+    if (DetClock::Enabled()) {
+        paceToRetrace = false;
+    }
     if (paceToRetrace) {
         uint64_t baseNanos = 0;
         uint64_t intervalNanos = 0;
@@ -1020,8 +1074,17 @@ extern "C" void VIGetCurrentLine_HLE_801bac48(CpuContext* ctx)
         interval = g_vi.retraceInterval;
         last = g_vi.lastRetrace;
     }
-    const auto now = Clock::now();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last);
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - last);
+    if (DetClock::Enabled()) {
+        uint64_t lastTicks = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_viMutex);
+            lastTicks = g_vi.detLastRetraceTicks;
+        }
+        const uint64_t now = DetClock::Now();
+        elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            TimeBaseContract::TicksToDuration(now > lastTicks ? now - lastTicks : 0));
+    }
     uint32_t line = 0;
     if (interval.count() > 0 && height > 0) {
         const uint64_t scaled = static_cast<uint64_t>(elapsed.count()) * height;

@@ -4,6 +4,7 @@
 
 // hle/gx/gx_fatal_stubs.cpp includes nothing but this header and reaches
 // std::fprintf / std::snprintf / std::abort through it.
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
@@ -12,6 +13,9 @@ void VI_HLE_ForceRetrace(CpuContext* ctx);
 void VI_HLE_PollRetrace(CpuContext* ctx);
 void VI_HLE_ProcessRetracesDeferred(int maxToProcess);
 void VI_HLE_WaitForNextRetracePoll();
+// Deterministic mode (det_clock.h): the virtual tick of the next VI retrace, DetClock::kNever
+// before VIInit.
+uint64_t VI_HLE_DetNextRetraceTicks();
 // Single owner of the Aurora frame presentation sequence (seal, optional pace
 // to the VI retrace boundary, pre-warm the next frame). paceToRetrace is true
 // for the GXCopyDisp producer path and false for retrace-context presents.
@@ -26,6 +30,9 @@ void Audio_HLE_Poll(CpuContext* ctx);
 // OS_HLE_ProcessAlarmsDeferred does, so it is safe to call from the middle of an
 // arbitrary translated function.
 void Audio_HLE_PollDeferred();
+// Deterministic mode: the virtual tick at which the AI DMA block in flight completes, or
+// DetClock::kNever while audio DMA is stopped.
+uint64_t Audio_HLE_DetNextEventTicks();
 bool OS_HLE_InterruptsEnabled() noexcept;
 extern "C" void OS_HLE_ProcessAlarmsDeferred(int maxToProcess);
 extern "C" void OS_HLE_BeginDeferredGuestCallbacks();

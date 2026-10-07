@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "det_clock.h"
 #include "abi_bridge.h"
 #include "memory.h"
 #include "hle_stubs.h"
@@ -18,6 +19,15 @@
 #include "timebase_contract.h"
 #include "runtime_log.h"
 #include "os_internal.h"
+
+namespace {
+// Sleep deadlines live on the virtual timeline in deterministic mode (see det_clock.h), so a
+// sleeper wakes at the same point of guest execution on every device.
+std::chrono::steady_clock::time_point SleepClockNow()
+{
+    return DetClock::Enabled() ? DetClock::NowTimePoint() : std::chrono::steady_clock::now();
+}
+} // namespace
 
 namespace OsHleInternal {
 std::mutex gSleepTimerMutex;
@@ -29,6 +39,16 @@ void CancelSleepTimer(uint32_t threadPtr)
     std::erase_if(gSleepTimers, [threadPtr](const SleepTimerEntry& entry) {
         return entry.threadPtr == threadPtr;
     });
+}
+
+uint64_t NextSleepTimerTicks()
+{
+    std::lock_guard<std::mutex> lock(gSleepTimerMutex);
+    uint64_t next = DetClock::kNever;
+    for (const SleepTimerEntry& entry : gSleepTimers) {
+        next = std::min(next, DetClock::TicksAtOrAfter(entry.deadline));
+    }
+    return next;
 }
 
 bool SleepTimerIsPending(uint32_t threadPtr)
@@ -65,7 +85,7 @@ void ScheduleSleepTimer(uint32_t threadPtr, uint64_t ticks)
     using Clock = std::chrono::steady_clock;
 
     const auto duration = TimeBaseContract::TicksToDuration(ticks);
-    const auto deadline = Clock::now() + duration;
+    const auto deadline = SleepClockNow() + duration;
 
     std::lock_guard<std::mutex> lock(gSleepTimerMutex);
     std::erase_if(gSleepTimers, [threadPtr](const SleepTimerEntry& entry) {
@@ -89,7 +109,7 @@ bool ProcessSleepTimers(CpuContext* cpu)
     bool processedAny = false;
     constexpr size_t kMaxTimersPerCall = 64;
     size_t processedCount = 0;
-    const auto now = Clock::now();
+    const auto now = SleepClockNow();
     while (processedCount < kMaxTimersPerCall) {
         SleepTimerEntry timer{0, {}};
         bool found = false;
@@ -193,7 +213,7 @@ bool ProcessSleepTimers(CpuContext* cpu)
                     ++it;
                 }
             }
-            const auto reconcileNow = Clock::now();
+            const auto reconcileNow = SleepClockNow();
             for (const uint32_t threadPtr : outstanding) {
                 if (SleepTimerIsPending(threadPtr)) {
                     strandFirstSeen.erase(threadPtr);

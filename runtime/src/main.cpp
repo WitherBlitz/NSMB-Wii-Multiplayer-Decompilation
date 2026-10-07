@@ -59,6 +59,8 @@
 #include <sys/system_properties.h>
 #endif
 
+#include "frame_input.h"
+#include "det_clock.h"
 #include "abi_bridge.h"
 #include "guest_flat_memory.h"
 #include "gx_guest_write.h"
@@ -1341,6 +1343,35 @@ int RuntimeMain(int argc, char** argv) {
             throw std::invalid_argument("The game runtime does not accept command-line options; use Config.toml through the installed host.");
         }
         RuntimeConfigFile::LogLoadedConfig();
+#if defined(__ANDROID__)
+        // Determinism testing on a phone: debug.nsmbw.det=1 turns the lockstep timing on,
+        // debug.nsmbw.dethash / detdump set NSMBW_DET_HASH / NSMBW_DET_DUMP (det_hash.h) and
+        // debug.nsmbw.script[2|3] the scripted remote (NSMBW_INPUT_SCRIPT), 91 characters each.
+        {
+            const auto property = [](const char* name) {
+                char value[PROP_VALUE_MAX] = {};
+                return __system_property_get(name, value) > 0 ? std::string(value) : std::string();
+            };
+            if (property("debug.nsmbw.det") == "1") {
+                setenv("NSMBW_DETERMINISTIC", "1", 1);
+            }
+            for (const auto& [prop, env] : {std::pair{"debug.nsmbw.dethash", "NSMBW_DET_HASH"},
+                                            std::pair{"debug.nsmbw.detdump", "NSMBW_DET_DUMP"}}) {
+                if (const std::string value = property(prop); !value.empty()) {
+                    setenv(env, value.c_str(), 1);
+                }
+            }
+            std::string script = property("debug.nsmbw.script") + property("debug.nsmbw.script2") +
+                                 property("debug.nsmbw.script3");
+            if (!script.empty()) {
+                setenv("NSMBW_INPUT_SCRIPT", script.c_str(), 1);
+            }
+        }
+#endif
+        if (const char* deterministic = std::getenv("NSMBW_DETERMINISTIC");
+            deterministic != nullptr && std::string(deterministic) == "1") {
+            DetClock::Enable();
+        }
         if (RuntimeConfigFile::DiscordPresenceEnabled()) {
             DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Kart Wii");
         }
@@ -1460,6 +1491,7 @@ int RuntimeMain(int argc, char** argv) {
         }
 #endif
 
+
         const AuroraInfo auroraInfo = aurora_initialize(0, nullptr, &auroraConfig);
         if (auroraInfo.initializationStatus != AURORA_INITIALIZATION_SUCCESS) {
             throw std::runtime_error(auroraInfo.initializationError != nullptr
@@ -1499,6 +1531,11 @@ int RuntimeMain(int argc, char** argv) {
         
         // Initialize the fiber-based threading system
         Fiber::GuestFiberManager::Initialize();
+
+        // Deterministic mode: the controllers as boot sees them, until the first retrace latches.
+        if (DetClock::Enabled()) {
+            FrameInput::Latch(0);
+        }
         
         CpuContextScope cpuScope(&cpu);
 

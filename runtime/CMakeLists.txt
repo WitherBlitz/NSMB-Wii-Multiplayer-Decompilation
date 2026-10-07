@@ -200,10 +200,14 @@ set(MKW_AURORA_DIR "${CMAKE_CURRENT_LIST_DIR}/../aurora-main")
 # Fast-math may erase them and change guest-visible integer conversions.
 set(MKW_TRANSLATED_PPC_FP_OPTIONS -fno-fast-math -ffp-contract=off)
 
+# kpad.cpp derives the accelerometer values the game reads (magnitude, speed, acc_vertical) in
+# native float math; network play needs them bit-identical on x86 and ARM, as the translated
+# code is.
 set(MKW_PPC_SEMANTIC_RUNTIME_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/src/ppc_helpers.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/src/fpu_helpers.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp")
+    "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/src/hle/input/kpad.cpp")
 set_source_files_properties(${MKW_PPC_SEMANTIC_RUNTIME_SOURCES} PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON
     SKIP_PRECOMPILE_HEADERS ON

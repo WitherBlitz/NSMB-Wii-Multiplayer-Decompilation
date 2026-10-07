@@ -1,3 +1,4 @@
+#include "frame_input.h"
 #include "hle_stubs.h"
 #include "input_bindings.h"
 #include "memory.h"
@@ -242,6 +243,15 @@ void WriteUnifiedStatus(uint32_t addr, const WiiRemoteInput::KpadSample* sample)
 
 // Neutral sticks and no buttons while an overlay owns input; the remote stays connected.
 bool ReadSample(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
+    if (FrameInput::Active()) {
+        // Deterministic mode: the frame's latched state (already neutral while an overlay owns input).
+        const FrameInput::Remote& remote = FrameInput::Get(chan);
+        if (!remote.connected) {
+            return false;
+        }
+        sample = remote.sample;
+        return true;
+    }
     if (!WiiRemoteInput::ReadKpadSample(chan, sample)) {
         return false;
     }

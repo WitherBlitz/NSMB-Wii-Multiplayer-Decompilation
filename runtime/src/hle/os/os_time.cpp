@@ -1,3 +1,4 @@
+#include "det_clock.h"
 #include "memory.h"
 #include "hle_stubs.h"
 #include "ppc_runtime.h"
@@ -29,11 +30,16 @@ void ReadTimeBaseRegisters(uint32_t& outHi, uint32_t& outLo)
 namespace OsHleInternal {
 uint64_t ReadSystemTime()
 {
-    uint32_t hi1 = 0;
-    uint32_t lo = 0;
-    ReadTimeBaseRegisters(hi1, lo);
-
-    const uint64_t timeBase = (static_cast<uint64_t>(hi1) << 32) | lo;
+    uint64_t timeBase = 0;
+    if (DetClock::Enabled()) {
+        // The HLE's own reads (alarm due checks, OSSetAlarm) don't step the deterministic timeline.
+        timeBase = DetClock::Now();
+    } else {
+        uint32_t hi1 = 0;
+        uint32_t lo = 0;
+        ReadTimeBaseRegisters(hi1, lo);
+        timeBase = (static_cast<uint64_t>(hi1) << 32) | lo;
+    }
     const uint32_t baseHi = ::Memory::Read32(0x800030D8u);
     const uint32_t baseLo = ::Memory::Read32(0x800030DCu);
     const uint64_t base = (static_cast<uint64_t>(baseHi) << 32) | baseLo;

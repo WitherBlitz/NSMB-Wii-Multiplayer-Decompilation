@@ -1,3 +1,5 @@
+#include "timebase_contract.h"
+#include "det_clock.h"
 #include "wii_remote_input.h"
 
 #include "runtime_config.h"
@@ -145,9 +147,13 @@ bool ScriptedSample(uint32_t chan, KpadSample& sample) {
     if (!script.active || chan != 0) {
         return false;
     }
-    static const uint64_t originMs = SDL_GetTicks();
+    // Deterministic mode times the script on the virtual timeline, so a run replays identically.
+    const auto clockMs = [] {
+        return DetClock::Enabled() ? DetClock::Now() / (TimeBaseContract::kTicksPerSecond / 1000) : SDL_GetTicks();
+    };
+    static const uint64_t originMs = clockMs();
     static std::vector<bool> announced(script.events.size(), false);
-    const uint64_t now = SDL_GetTicks() - originMs;
+    const uint64_t now = clockMs() - originMs;
     sample = {};
     sample.acc[1] = -1.0f;  // at rest, KPAD frame
     for (size_t i = 0; i < script.events.size(); ++i) {
