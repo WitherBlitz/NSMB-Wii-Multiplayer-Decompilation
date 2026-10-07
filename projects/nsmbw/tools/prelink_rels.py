@@ -10,7 +10,8 @@ import struct
 import sys
 from pathlib import Path
 
-GAME = Path(r"E:\NSMBWPort\game")
+# The folder unpack_game.py filled (default: "game" next to this repository), or the first argument.
+GAME = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[3].parent / "game"
 OUT_REL = GAME / "nsmbw_linked.rel"
 OUT_JSON = GAME / "nsmbw_rel_layout.json"
 
