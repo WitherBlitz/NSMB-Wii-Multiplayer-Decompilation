@@ -38,6 +38,10 @@ public final class GameActivity extends SDLActivity
     /** What this phone is called in LAN room lists (netplay). */
     static native void nativeSetDeviceName(String name);
 
+    /** Whether this run is a LAN session, and leaving one (the host keeps the session's save). */
+    static native boolean nativeSessionActive();
+    static native void nativePrepareToLeave();
+
     private WifiManager.MulticastLock multicastLock;
 
     private AppSettings settings;
@@ -122,6 +126,12 @@ public final class GameActivity extends SDLActivity
         onMenu();
     }
 
+    /** "Leave LAN Game": keep the host's progress, then start the game again on its own. */
+    private void leaveSession() {
+        nativePrepareToLeave();
+        restartForSession();  // with the session file gone, the next start is an ordinary one
+    }
+
     /** The name the user gave the phone, else its model. */
     private String deviceName() {
         String name = Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME);
@@ -204,12 +214,16 @@ public final class GameActivity extends SDLActivity
     @Override
     public void onMenu() {
         touch.release();
-        final String[] items = {"Display", "Controls", "Quit Game"};
+        final boolean inSession = nativeReady && nativeSessionActive();
+        final String[] items = inSession
+                ? new String[] {"Display", "Controls", "Leave LAN Game", "Quit Game"}
+                : new String[] {"Display", "Controls", "Quit Game"};
         new AlertDialog.Builder(this)
                 .setTitle("Menu")
                 .setItems(items, (dialog, which) -> {
                     if (which == 0) showDisplayMenu();
                     else if (which == 1) showControlsMenu();
+                    else if (inSession && which == 2) leaveSession();
                     else finish();
                 })
                 .setNegativeButton("Back", null)
