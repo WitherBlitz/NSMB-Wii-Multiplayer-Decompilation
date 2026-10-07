@@ -1057,6 +1057,13 @@ LONG CALLBACK SehLogger(EXCEPTION_POINTERS* info) {
     if ((info->ExceptionRecord->ExceptionCode & 0x20000000u) != 0) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
+    // Likewise anything that isn't a processor fault: RPC raises its Win32 errors as exceptions and
+    // handles them itself (the folder picker's shell raises RPC_S_SERVER_UNAVAILABLE, 0x6BA, on
+    // some PCs). Faults are NTSTATUS errors of facility 0 (0xC000xxxx) or a misalignment.
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+    if ((code & 0xFFFF0000u) != 0xC0000000u && code != EXCEPTION_DATATYPE_MISALIGNMENT) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     return ReportFatalSehAndExit(info);
 }
 
