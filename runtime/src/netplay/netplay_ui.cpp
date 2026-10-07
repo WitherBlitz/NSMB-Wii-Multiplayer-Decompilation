@@ -516,10 +516,60 @@ void OnSessionStall() {
     }
 }
 
+// NSMBW_LOBBY_TEST (Android: debug.nsmbw.lobbytest) drives the lobby without the menus, to test
+// rooms between devices: "host" opens a room for 2 and starts it once someone joins, "join" joins
+// the first room it finds. The session then starts as it does from the menus.
+bool LobbyTest() {
+    static const std::string mode = [] {
+        const char* value = std::getenv("NSMBW_LOBBY_TEST");
+        return value != nullptr ? std::string(value) : std::string();
+    }();
+    if (mode != "host" && mode != "join") {
+        return false;
+    }
+    static bool begun = false;
+    if (!begun) {
+        begun = true;
+        RT_LOGF(RT_TAG_RUNTIME, "netplay test: %s\n", mode.c_str());
+        if (mode == "host") {
+            NetplayLobby::Host(2, 0);
+        } else {
+            NetplayLobby::Browse();
+        }
+        return true;
+    }
+    const NetplayLobby::Snapshot lobby = NetplayLobby::Get();
+    if (mode == "host" && lobby.phase == Phase::Hosting && lobby.members.size() >= 2) {
+        NetplayLobby::Start();
+    }
+    if (mode == "join" && lobby.phase == Phase::Browsing && !lobby.rooms.empty()) {
+        const auto& room = lobby.rooms.front();
+        RT_LOGF(RT_TAG_RUNTIME, "netplay test: joining '%s' at %s%s\n", room.name.c_str(), room.address.c_str(),
+                room.tailscale ? " (Tailscale)" : "");
+        NetplayLobby::Join(room.id);
+    }
+    static std::string lastMessage;
+    if (lobby.phase == Phase::Failed && lobby.message != lastMessage) {
+        lastMessage = lobby.message;
+        RT_LOGF(RT_TAG_RUNTIME, "netplay test: failed: %s\n", lobby.message.c_str());
+    }
+    if (lobby.phase == Phase::Restarting && !g_ui.restarting) {
+        NetplayLobby::Plan plan;
+        if (NetplayLobby::TakePlan(plan)) {
+            g_ui.restarting = true;
+            NetplayStart::Restart(plan);
+        }
+    }
+    return true;
+}
+
 void Draw() {
     ImDrawList* list = ImGui::GetBackgroundDrawList();
     if (NetplaySession::Active()) {
         DrawSession(list);
+        return;
+    }
+    if (LobbyTest()) {
         return;
     }
 

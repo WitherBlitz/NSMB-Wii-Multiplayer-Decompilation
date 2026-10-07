@@ -1,4 +1,5 @@
 #include "netplay/game_layout.h"
+#include "netplay_lobby.h"
 #include "netplay_ui.h"
 #include "settings_overlay.h"
 #include "audio_backend.h"
@@ -1048,6 +1049,53 @@ void DrawAudioSettings() {
     }
 }
 
+// LAN Play: this PC's addresses for other players, and the devices asked for rooms directly
+// (Tailscale doesn't carry broadcasts; netplay_lobby.h). Peers from `tailscale status` are asked
+// anyway; this is for typing in a device's Tailscale name or address by hand.
+void DrawLanPlaySettings() {
+    static std::vector<std::string> ownAddresses;
+    static uint64_t ownAddressesAt = 0;
+    if (ownAddressesAt == 0 || SDL_GetTicks() - ownAddressesAt > 2000) {
+        ownAddresses = NetplayLobby::OwnAddresses();
+        ownAddressesAt = SDL_GetTicks();
+    }
+    ImGui::TextUnformatted("Rooms are found on your Wi-Fi by themselves, and over Tailscale through");
+    ImGui::TextUnformatted("the devices in `tailscale status` and the ones below.");
+    ImGui::Separator();
+    ImGui::TextUnformatted("This PC (tell other players one of these):");
+    for (const auto& address : ownAddresses) {
+        ImGui::BulletText("%s%s", address.c_str(), address.rfind("100.", 0) == 0 ? "  (Tailscale)" : "");
+    }
+    ImGui::Separator();
+    ImGui::TextUnformatted("Devices asked for rooms directly:");
+    const auto known = NetplayLobby::KnownDevices();
+    if (known.empty()) {
+        ImGui::TextDisabled("none yet: playing together adds them");
+    }
+    for (const auto& device : known) {
+        ImGui::PushID(device.c_str());
+        if (ImGui::SmallButton("Remove")) {
+            NetplayLobby::RemoveKnownDevice(device);
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(device.c_str());
+        ImGui::PopID();
+    }
+    static char entry[128] = {};
+    static std::string result;
+    ImGui::SetNextItemWidth(260.0f);
+    const bool submitted = ImGui::InputTextWithHint("##add-device", "Tailscale name or address", entry, sizeof(entry),
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if ((ImGui::Button("Add") || submitted) && entry[0] != '\0') {
+        result = NetplayLobby::AddKnownDevice(entry) ? std::string("Added ") + entry : "Already in the list, or not a name";
+        entry[0] = '\0';
+    }
+    if (!result.empty()) {
+        ImGui::TextDisabled("%s", result.c_str());
+    }
+}
+
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     // NSMBW: the aspect (original 4:3, 16:9, fill) lives in the Aspect menu (DisplaySettings).
@@ -1431,6 +1479,11 @@ void DrawTopBar() {
         // Nest capture under this menu so opening/closing the modal preserves
         // the settings popup and its current port and scroll position.
         DrawRebindPrompt();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("LAN Play")) {
+        DrawLanPlaySettings();
         ImGui::EndMenu();
     }
 

@@ -1366,7 +1366,9 @@ int RuntimeMain(int argc, char** argv) {
                 setenv("NSMBW_DETERMINISTIC", "1", 1);
             }
             for (const auto& [prop, env] : {std::pair{"debug.nsmbw.dethash", "NSMBW_DET_HASH"},
-                                            std::pair{"debug.nsmbw.detdump", "NSMBW_DET_DUMP"}}) {
+                                            std::pair{"debug.nsmbw.detdump", "NSMBW_DET_DUMP"},
+                                            std::pair{"debug.nsmbw.lobbytest", "NSMBW_LOBBY_TEST"},
+                                            std::pair{"debug.nsmbw.tsonly", "NSMBW_NET_TAILSCALE_ONLY"}}) {
                 if (const std::string value = property(prop); !value.empty()) {
                     setenv(env, value.c_str(), 1);
                 }

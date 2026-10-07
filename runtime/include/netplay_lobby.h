@@ -6,11 +6,14 @@
 #include <vector>
 
 // Network play, the lobby: rooms before a session starts. A host opens a room on UDP port 52130;
-// other devices find it by broadcasting on every local network and by asking known Tailscale
-// devices directly (the PC's `tailscale status`, hosts this device has played with before, and
-// [netplay] hosts in Config.toml), then join it. Starting the room hands every member the host's
-// save, waits until all of them have stored it, and tells everyone to restart into the session
-// together (netplay_start.h).
+// other devices find it by broadcasting on every local network and by asking Tailscale devices
+// directly, since Tailscale carries no broadcasts: the PC's `tailscale status` peers and the known
+// devices (KnownDevices). Hosts also announce their room to those devices, and phones listen on
+// the room port while looking, so a phone finds a room without knowing its host. Every room answer
+// and search passes on the Tailscale devices the sender knows, so all devices on a tailnet that
+// run the game learn each other through any one they meet. Starting the room hands every member
+// the host's save, waits until all of them have stored it, and tells everyone to restart into the
+// session together (netplay_start.h).
 namespace NetplayLobby {
 
 enum class Phase {
@@ -72,5 +75,14 @@ struct Plan {
     std::map<std::string, std::vector<uint8_t>> nandFiles;  // NAND path -> bytes
 };
 bool TakePlan(Plan& out);
+
+// Devices asked for rooms directly: Netplay/hosts.txt, one Tailscale name (MagicDNS) or address
+// per line. Filled by playing together, by other devices passing on the ones they know, and by hand.
+std::vector<std::string> KnownDevices();
+// False when it is already known or isn't a name or address.
+bool AddKnownDevice(const std::string& nameOrAddress);
+void RemoveKnownDevice(const std::string& nameOrAddress);
+// This device's addresses, Tailscale first: what another player types in to find it.
+std::vector<std::string> OwnAddresses();
 
 } // namespace NetplayLobby

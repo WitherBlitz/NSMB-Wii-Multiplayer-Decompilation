@@ -10,12 +10,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <random>
 #include <set>
+#include <string>
 #include <thread>
 
 #if defined(_WIN32)
@@ -140,7 +142,8 @@ struct State {
     std::vector<HostMember> members;  // excluding the host
     // Browsing / member
     std::vector<FoundRoom> rooms;
-    std::vector<Netplay::Address> unicastTargets;
+    std::vector<Netplay::Address> unicastTargets;  // known and Tailscale devices, asked one by one
+    std::vector<uint32_t> ownIps;
     Netplay::Address hostAddress;
     uint64_t joinRoomId = 0;
     std::vector<uint32_t> joinHostIps;
@@ -184,7 +187,20 @@ std::vector<uint8_t> Header(Type type, uint64_t roomId) {
     return w.data;
 }
 
+// NSMBW_NET_TAILSCALE_ONLY=1 (Android: debug.nsmbw.tsonly): no broadcasts, and anything not from a
+// Tailscale address is ignored, as if the devices were on different networks. For testing.
+bool TailscaleOnly() {
+    static const bool only = [] {
+        const char* value = std::getenv("NSMBW_NET_TAILSCALE_ONLY");
+        return value != nullptr && std::string(value) == "1";
+    }();
+    return only;
+}
+
 void Send(State& s, const Netplay::Address& to, Type type, uint64_t roomId, const std::vector<uint8_t>& body = {}) {
+    if (TailscaleOnly() && !Netplay::IsTailscaleIp(to.ip)) {
+        return;
+    }
     std::vector<uint8_t> packet = Header(type, roomId);
     packet.insert(packet.end(), body.begin(), body.end());
     s.socket.SendTo(to, packet.data(), packet.size());
@@ -194,44 +210,104 @@ std::filesystem::path HostsFile() {
     return RuntimeConfigFile::ApplicationDataDirectory() / "Netplay" / "hosts.txt";
 }
 
+constexpr size_t kMaxKnownDevices = 64;
+constexpr size_t kMaxShared = 16;  // known Tailscale devices passed on in one packet
+
 // Hosts to ask directly: Tailscale doesn't carry broadcasts, so rooms there are found by asking
-// each device. Remembered hosts plus the ones in hosts.txt (one name or address per line).
-std::vector<std::string> RememberedHosts() {
+// each device. hosts.txt holds one name or address per line: devices played with or met over
+// Tailscale, ones other devices passed on, and ones typed in (the Android app edits it as well).
+std::mutex g_hostsMutex;
+
+std::vector<std::string> ReadHostsLocked() {
+    // Read again only when the file changed: packets ask for this every second.
+    static std::vector<std::string> cached;
+    static std::filesystem::file_time_type cachedStamp{};
+    static bool loaded = false;
+    std::error_code ec;
+    const auto stamp = std::filesystem::last_write_time(HostsFile(), ec);
+    if (loaded && !ec && stamp == cachedStamp) {
+        return cached;
+    }
     std::vector<std::string> hosts;
     std::ifstream in(HostsFile());
     std::string line;
     while (std::getline(in, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
             line.pop_back();
         }
         if (!line.empty() && line[0] != '#') {
             hosts.push_back(line);
         }
     }
+    cached = hosts;
+    cachedStamp = ec ? std::filesystem::file_time_type{} : stamp;
+    loaded = !ec;
     return hosts;
 }
 
-void RememberHost(const Netplay::Address& address) {
-    const std::string text = Netplay::IpToString(address.ip);
-    auto hosts = RememberedHosts();
-    if (std::find(hosts.begin(), hosts.end(), text) != hosts.end()) {
-        return;
-    }
+void WriteHostsLocked(const std::vector<std::string>& hosts) {
     std::error_code ec;
     std::filesystem::create_directories(HostsFile().parent_path(), ec);
-    std::ofstream out(HostsFile(), std::ios::app);
-    out << text << "\n";
+    std::ofstream out(HostsFile(), std::ios::trunc);
+    out << "# Devices asked for LAN play rooms directly (Tailscale doesn't carry broadcasts).\n"
+           "# One Tailscale name or address per line.\n";
+    for (const auto& host : hosts) {
+        out << host << "\n";
+    }
+}
+
+std::vector<std::string> RememberedHosts() {
+    std::lock_guard<std::mutex> lock(g_hostsMutex);
+    return ReadHostsLocked();
+}
+
+bool RememberHostText(const std::string& text) {
+    std::lock_guard<std::mutex> lock(g_hostsMutex);
+    auto hosts = ReadHostsLocked();
+    if (std::find(hosts.begin(), hosts.end(), text) != hosts.end() || hosts.size() >= kMaxKnownDevices) {
+        return false;
+    }
+    hosts.push_back(text);
+    WriteHostsLocked(hosts);
+    return true;
+}
+
+void RememberHost(const Netplay::Address& address) {
+    RememberHostText(Netplay::IpToString(address.ip));
+}
+
+// The known devices' Tailscale addresses, passed on so that every device on the tailnet that runs
+// the game learns the others through whichever one it meets.
+void WriteSharedDevices(Writer& w) {
+    std::vector<uint32_t> ips;
+    for (const auto& host : RememberedHosts()) {
+        Netplay::Address address;
+        if (Netplay::ParseAddress(host, Netplay::kDefaultPort, address) && Netplay::IsTailscaleIp(address.ip)) {
+            ips.push_back(address.ip);
+            if (ips.size() == kMaxShared) {
+                break;
+            }
+        }
+    }
+    w.U8(static_cast<uint8_t>(ips.size()));
+    for (const uint32_t ip : ips) {
+        w.U32(ip);
+    }
+    static size_t lastLogged = SIZE_MAX;
+    if (ips.size() != lastLogged) {
+        lastLogged = ips.size();
+        RT_LOGF(RT_TAG_RUNTIME, "netplay: passing on %zu known Tailscale device(s)\n", ips.size());
+    }
 }
 
 #if defined(_WIN32)
-// The Tailscale CLI's peer list: every IPv4 address under "TailscaleIPs" except our own.
-std::vector<std::string> TailscalePeers() {
-    std::vector<std::string> peers;
-    wchar_t cmd[] = L"\"C:\\Program Files\\Tailscale\\tailscale.exe\" status --json";
+// `tailscale status --json` from the default install, else from PATH; "" without Tailscale.
+std::string TailscaleStatusJson(const wchar_t* commandLine) {
+    std::wstring cmd = commandLine;
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE readPipe = nullptr, writePipe = nullptr;
     if (!CreatePipe(&readPipe, &writePipe, &sa, 0)) {
-        return peers;
+        return {};
     }
     SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
     STARTUPINFOW si{};
@@ -240,11 +316,11 @@ std::vector<std::string> TailscalePeers() {
     si.hStdOutput = writePipe;
     si.hStdError = writePipe;
     PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(nullptr, cmd, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    const BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(writePipe);
     if (!ok) {
         CloseHandle(readPipe);
-        return peers;
+        return {};
     }
     std::string json;
     char buffer[4096];
@@ -256,6 +332,16 @@ std::vector<std::string> TailscalePeers() {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(readPipe);
+    return json;
+}
+
+// The Tailscale CLI's peer list: every IPv4 address under "TailscaleIPs" except our own.
+std::vector<std::string> TailscalePeers() {
+    std::vector<std::string> peers;
+    std::string json = TailscaleStatusJson(L"\"C:\\Program Files\\Tailscale\\tailscale.exe\" status --json");
+    if (json.find("\"Self\"") == std::string::npos) {
+        json = TailscaleStatusJson(L"tailscale.exe status --json");
+    }
     // Skip "Self" (our own entry), then collect the peers' addresses.
     const size_t self = json.find("\"Self\"");
     const size_t selfEnd = self == std::string::npos ? std::string::npos : json.find('}', json.find("\"TailscaleIPs\"", self));
@@ -357,23 +443,56 @@ std::vector<uint8_t> StartBody(const State& s, const HostMember& member) {
     return w.data;
 }
 
+// A device that runs the game, met over Tailscale or passed on by one: ask it for rooms (and tell
+// it about ours) from now on, this time and next time.
+void LearnLocked(State& s, uint32_t ip) {
+    if (!Netplay::IsTailscaleIp(ip) || std::find(s.ownIps.begin(), s.ownIps.end(), ip) != s.ownIps.end()) {
+        return;
+    }
+    const Netplay::Address address{ip, Netplay::kDefaultPort};
+    if (std::find(s.unicastTargets.begin(), s.unicastTargets.end(), address) == s.unicastTargets.end()) {
+        s.unicastTargets.push_back(address);
+    }
+    if (RememberHostText(Netplay::IpToString(ip))) {
+        RT_LOGF(RT_TAG_RUNTIME, "netplay: will ask %s for rooms from now on\n", Netplay::IpToString(ip).c_str());
+    }
+}
+
+// The devices another one passed on (WriteSharedDevices); older builds send none.
+void ReadSharedLocked(State& s, Reader& r) {
+    const uint8_t count = r.U8();
+    for (uint8_t i = 0; i < count && i < kMaxShared; ++i) {
+        const uint32_t ip = r.U32();
+        if (r.bad) {
+            return;
+        }
+        LearnLocked(s, ip);
+    }
+}
+
+std::vector<uint8_t> RoomInfoBody(const State& s) {
+    Writer w;
+    w.Str(s.roomName);
+    w.Str(Netplay::DeviceName());
+    w.U8(s.maxPlayers);
+    w.U8(static_cast<uint8_t>(1 + s.members.size()));
+    w.U8(s.phase == Phase::Hosting ? 1 : 0);
+    // Every address this device has (LAN and Tailscale): whoever joins remembers them all, so
+    // the room is found again from elsewhere, where broadcasts don't reach.
+    w.U8(static_cast<uint8_t>(std::min<size_t>(s.ownIps.size(), 8)));
+    for (size_t i = 0; i < s.ownIps.size() && i < 8; ++i) {
+        w.U32(s.ownIps[i]);
+    }
+    WriteSharedDevices(w);
+    return w.data;
+}
+
 // ---------------------------------------------------------------- host
 void HostPacketLocked(State& s, const Netplay::Address& from, uint8_t type, uint64_t roomId, Reader& r) {
     if (type == kDiscover) {
-        Writer w;
-        w.Str(s.roomName);
-        w.Str(Netplay::DeviceName());
-        w.U8(s.maxPlayers);
-        w.U8(static_cast<uint8_t>(1 + s.members.size()));
-        w.U8(s.phase == Phase::Hosting ? 1 : 0);
-        // Every address this device has (LAN and Tailscale): whoever joins remembers them all, so
-        // the room is found again from elsewhere, where broadcasts don't reach.
-        const auto interfaces = Netplay::LocalInterfaces();
-        w.U8(static_cast<uint8_t>(std::min<size_t>(interfaces.size(), 8)));
-        for (size_t i = 0; i < interfaces.size() && i < 8; ++i) {
-            w.U32(interfaces[i].ip);
-        }
-        Send(s, from, kRoomInfo, s.roomId, w.data);
+        LearnLocked(s, from.ip);  // someone looking for rooms over Tailscale runs the game too
+        ReadSharedLocked(s, r);
+        Send(s, from, kRoomInfo, s.roomId, RoomInfoBody(s));
         return;
     }
     if (roomId != s.roomId) {
@@ -472,6 +591,23 @@ void HostTickLocked(State& s) {
             }
         }
     }
+    // Announce the room to the known and Tailscale devices (and the local networks): a phone looking
+    // for rooms listens on the room port, so it sees this room without knowing this device.
+    static Clock::time_point lastAnnounce{};
+    if (s.phase == Phase::Hosting && now - lastAnnounce > 1s) {
+        lastAnnounce = now;
+        const auto body = RoomInfoBody(s);
+        for (const auto& target : s.unicastTargets) {
+            if (std::none_of(s.members.begin(), s.members.end(), [&](const HostMember& m) { return m.address.ip == target.ip; })) {
+                Send(s, target, kRoomInfo, s.roomId, body);
+            }
+        }
+        for (const auto& itf : Netplay::LocalInterfaces()) {
+            if (itf.broadcast != 0) {
+                Send(s, Netplay::Address{itf.broadcast, Netplay::kDefaultPort}, kRoomInfo, s.roomId, body);
+            }
+        }
+    }
     static Clock::time_point lastState{};
     if (now - lastState > 500ms) {
         lastState = now;
@@ -546,6 +682,16 @@ void MemberPacketLocked(State& s, const Netplay::Address& from, uint8_t type, ui
         for (uint8_t i = 0; i < addressCount && !r.bad; ++i) {
             found.hostIps.push_back(r.U32());
         }
+        if (r.bad) {
+            return;
+        }
+        // The host's own Tailscale address (also when it was found on the Wi-Fi) and the devices
+        // it knows: next time they are asked directly, from anywhere on the tailnet.
+        LearnLocked(s, from.ip);
+        for (const uint32_t ip : found.hostIps) {
+            LearnLocked(s, ip);
+        }
+        ReadSharedLocked(s, r);
         found.room.full = !accepting || found.room.players >= found.room.maxPlayers;
         found.room.address = Netplay::ToString(from);
         found.room.tailscale = Netplay::IsTailscaleIp(from.ip);
@@ -579,11 +725,10 @@ void MemberPacketLocked(State& s, const Netplay::Address& from, uint8_t type, ui
         }
         s.localSlot = slot;
         s.phase = Phase::InRoom;
+        // The host as reached, and its Tailscale addresses (its Wi-Fi ones are found by broadcast).
         RememberHost(from);
         for (const uint32_t ip : s.joinHostIps) {
-            if (ip != from.ip && (ip >> 24) != 127) {
-                RememberHost(Netplay::Address{ip, Netplay::kDefaultPort});
-            }
+            LearnLocked(s, ip);
         }
         RT_LOGF(RT_TAG_RUNTIME, "netplay: joined the room at %s as player %u\n", Netplay::ToString(from).c_str(), slot + 1);
         return;
@@ -683,14 +828,16 @@ void MemberTickLocked(State& s) {
         static Clock::time_point lastDiscover{};
         if (now - lastDiscover > 1s) {
             lastDiscover = now;
+            Writer shared;
+            WriteSharedDevices(shared);
             for (const auto& itf : Netplay::LocalInterfaces()) {
                 if (itf.broadcast != 0) {
-                    Send(s, Netplay::Address{itf.broadcast, Netplay::kDefaultPort}, kDiscover, 0);
+                    Send(s, Netplay::Address{itf.broadcast, Netplay::kDefaultPort}, kDiscover, 0, shared.data);
                 }
             }
-            Send(s, Netplay::Address{0xFFFFFFFFu, Netplay::kDefaultPort}, kDiscover, 0);
+            Send(s, Netplay::Address{0xFFFFFFFFu, Netplay::kDefaultPort}, kDiscover, 0, shared.data);
             for (const auto& target : s.unicastTargets) {
-                Send(s, target, kDiscover, 0);
+                Send(s, target, kDiscover, 0, shared.data);
             }
         }
         std::erase_if(s.rooms, [&](const FoundRoom& f) { return now - f.lastSeen > 4s; });
@@ -750,6 +897,8 @@ void MemberTickLocked(State& s) {
     }
 }
 
+void RefreshTargets();
+
 void Thread() {
     State& s = S();
     std::vector<uint8_t> buffer(2048);
@@ -757,7 +906,7 @@ void Thread() {
         Netplay::Address from;
         const int got = s.socket.ReceiveFrom(from, buffer.data(), buffer.size(), 5);
         std::lock_guard<std::mutex> lock(s.mutex);
-        if (got > 0) {
+        if (got > 0 && (!TailscaleOnly() || Netplay::IsTailscaleIp(from.ip))) {
             Reader r{buffer.data(), static_cast<size_t>(got)};
             const uint32_t magic = r.U32();
             const uint8_t version = r.U8();
@@ -776,6 +925,11 @@ void Thread() {
             HostTickLocked(s);
         } else {
             MemberTickLocked(s);
+        }
+        static Clock::time_point lastRefresh = Clock::now();
+        if ((s.phase == Phase::Hosting || s.phase == Phase::Browsing) && Clock::now() - lastRefresh > 15s) {
+            lastRefresh = Clock::now();
+            RefreshTargets();
         }
     }
 }
@@ -810,6 +964,67 @@ void StopLocked(State& s, std::unique_lock<std::mutex>& lock) {
     s.blob.clear();
     s.received.clear();
     s.manifest.clear();
+}
+
+// The devices to ask (and announce rooms to) one by one: the known ones plus the Tailscale CLI's
+// peers. Resolving names and running the CLI can take a moment, so this runs off the game thread;
+// it is repeated while the lobby is open, so devices added meanwhile are picked up.
+std::atomic<bool> g_refreshing{false};
+
+void RefreshTargets() {
+    if (g_refreshing.exchange(true)) {
+        return;
+    }
+    std::thread([] {
+        std::vector<std::string> hosts = RememberedHosts();
+        for (auto& peer : TailscalePeers()) {
+            hosts.push_back(peer);
+        }
+        std::vector<Netplay::Address> targets;
+        for (const auto& host : hosts) {
+            Netplay::Address address;
+            if (Netplay::ResolveAddress(host, Netplay::kDefaultPort, address) &&
+                std::find(targets.begin(), targets.end(), address) == targets.end()) {
+                targets.push_back(address);
+            }
+        }
+        State& st = S();
+        {
+            std::lock_guard<std::mutex> guard(st.mutex);
+            if (st.phase == Phase::Browsing || st.phase == Phase::Hosting) {
+                // Keep the ones learned since (they are in hosts.txt as well, but names may not resolve).
+                for (const auto& known : st.unicastTargets) {
+                    if (std::find(targets.begin(), targets.end(), known) == targets.end()) {
+                        targets.push_back(known);
+                    }
+                }
+                std::erase_if(targets, [&](const Netplay::Address& a) {
+                    return std::find(st.ownIps.begin(), st.ownIps.end(), a.ip) != st.ownIps.end();
+                });
+                if (targets.size() != st.unicastTargets.size()) {
+                    RT_LOGF(RT_TAG_RUNTIME, "netplay: asking %zu known or Tailscale device(s) directly\n", targets.size());
+                }
+                st.unicastTargets = targets;
+            }
+        }
+        g_refreshing = false;
+    }).detach();
+}
+
+std::vector<uint32_t> OwnIps() {
+    std::vector<uint32_t> ips;
+    for (const auto& itf : Netplay::LocalInterfaces()) {
+        if ((itf.ip >> 24) != 127) {
+            ips.push_back(itf.ip);
+        }
+    }
+    // Tailscale first: those reach a device from anywhere.
+    std::stable_partition(ips.begin(), ips.end(), [](uint32_t ip) { return Netplay::IsTailscaleIp(ip); });
+    return ips;
+}
+
+void NoteOwnAddresses(State& s) {
+    s.ownIps = OwnIps();
 }
 
 bool OpenSocket(State& s, uint16_t port) {
@@ -853,8 +1068,11 @@ void Host(uint8_t maxPlayers, int saveFile) {
         s.roomId = 0;
         return;
     }
+    NoteOwnAddresses(s);
+    s.unicastTargets.clear();
     s.phase = Phase::Hosting;
     s.thread = std::thread(Thread);
+    RefreshTargets();
     RT_LOGF(RT_TAG_RUNTIME, "netplay: opened '%s' for %u players on UDP %u\n", s.roomName.c_str(), s.maxPlayers,
             s.socket.LocalPort());
 }
@@ -864,34 +1082,55 @@ void Browse() {
     std::unique_lock<std::mutex> lock(s.mutex);
     StopLocked(s, lock);
     s.message.clear();
+#if defined(_WIN32)
+    // Any port: an explicitly bound one makes Windows Firewall ask; a PC finds Tailscale rooms by
+    // asking every peer `tailscale status` lists, so it needs no announcements.
     if (!OpenSocket(s, 0)) {
         return;
     }
+#else
+    // Listen on the room port while looking, so hosts' announcements arrive: a phone can't list the
+    // tailnet's devices, but every PC and known device that hosts tells it about the room.
+    if (!s.socket.Open(Netplay::kDefaultPort) && !OpenSocket(s, 0)) {
+        return;
+    }
+#endif
+    NoteOwnAddresses(s);
     s.phase = Phase::Browsing;
     s.unicastTargets.clear();
     s.thread = std::thread(Thread);
     lock.unlock();
-    // Tailscale devices are asked one by one (no broadcasts there); resolving names and asking the
-    // Tailscale CLI can take a moment, so do it off the game thread.
-    std::thread([] {
-        std::vector<std::string> hosts = RememberedHosts();
-        for (auto& peer : TailscalePeers()) {
-            hosts.push_back(peer);
-        }
-        std::vector<Netplay::Address> targets;
-        for (const auto& host : hosts) {
-            Netplay::Address address;
-            if (Netplay::ResolveAddress(host, Netplay::kDefaultPort, address)) {
-                targets.push_back(address);
-            }
-        }
-        State& st = S();
-        std::lock_guard<std::mutex> guard(st.mutex);
-        if (st.phase == Phase::Browsing) {
-            st.unicastTargets = targets;
-            RT_LOGF(RT_TAG_RUNTIME, "netplay: also asking %zu known or Tailscale device(s) for rooms\n", targets.size());
-        }
-    }).detach();
+    RefreshTargets();
+}
+
+std::vector<std::string> KnownDevices() {
+    return RememberedHosts();
+}
+
+bool AddKnownDevice(const std::string& nameOrAddress) {
+    std::string text = nameOrAddress;
+    std::erase_if(text, [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; });
+    if (text.empty() || text.size() > 253 || text[0] == '#') {
+        return false;
+    }
+    const bool added = RememberHostText(text);
+    RefreshTargets();
+    return added;
+}
+
+void RemoveKnownDevice(const std::string& nameOrAddress) {
+    std::lock_guard<std::mutex> lock(g_hostsMutex);
+    auto hosts = ReadHostsLocked();
+    std::erase(hosts, nameOrAddress);
+    WriteHostsLocked(hosts);
+}
+
+std::vector<std::string> OwnAddresses() {
+    std::vector<std::string> list;
+    for (const uint32_t ip : OwnIps()) {
+        list.push_back(Netplay::IpToString(ip));
+    }
+    return list;
 }
 
 void Join(uint64_t roomId) {
