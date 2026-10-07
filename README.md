@@ -1,8 +1,8 @@
-# NSMB Wii Decompilation
+# NSMB Wii Decompilation - LAN Multiplayer
 
 <p align="center">
-  <a href="https://github.com/WitherBlitz/NSMB-Wii-Decompilation/releases/latest"><img alt="Android 11+, arm64" src="https://img.shields.io/badge/Android-11%2B%20%C2%B7%20arm64-3DDC84?logo=android&amp;logoColor=white"></a>
-  <a href="https://github.com/WitherBlitz/NSMB-Wii-Decompilation/releases/latest"><img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4"></a>
+  <a href="https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases/latest"><img alt="Android 11+, arm64" src="https://img.shields.io/badge/Android-11%2B%20%C2%B7%20arm64-3DDC84?logo=android&amp;logoColor=white"></a>
+  <a href="https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases/latest"><img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4"></a>
 </p>
 <p align="center">
   <a href="#building-from-source"><img alt="PowerPC static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A"></a>
@@ -36,12 +36,13 @@ Claude Opus 5.5.**
 The whole game is compiled to ARM64 code ahead of time. It runs at a full 60 fps on a
 Snapdragon 6 Gen 1 phone.
 
-**LAN multiplayer across phones and PCs.**
+**LAN and Tailscale multiplayer across phones and PCs.**
 On the save file screen, pick **LAN** or **Couch**. LAN lets you **Create Room** (choose how many
 are playing, then start the room when everyone is in) or **Join** a room from a list that finds
-games on your network by itself (PCs with Tailscale also see rooms on your Tailscale network).
-Every device runs the game and only the players' inputs travel, in lockstep. If a player drops, the
-others get a message instead of a frozen game, and the host keeps the progress.
+games by itself: on your Wi-Fi, and over the internet on your [Tailscale](https://tailscale.com)
+network, phones included. Every device runs the game and only the players' inputs travel, in
+lockstep. If a player drops, the others get a message instead of a frozen game, and the host keeps
+the progress. See [LAN and Tailscale multiplayer](#lan-and-tailscale-multiplayer).
 
 **Touch controls, tilt and shake.**
 An on-screen sideways Wii Remote (D-pad, 1, 2, A, Shake, + and -) with adjustable opacity and
@@ -114,17 +115,17 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 
 ## Installing
 
-Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Decompilation/releases/latest)
+Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases/latest)
 page:
 
-- **Android:** `NSMBW-0.0.1-android-arm64.apk`. Open it on your phone and allow installing from that
+- **Android:** `NSMBW-0.0.2-android-arm64.apk`. Open it on your phone and allow installing from that
   app when Android asks. Updates install over it and keep your saves and game files.
-- **Windows:** `NSMBW-0.0.1-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
+- **Windows:** `NSMBW-0.0.2-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
   saves stay in the `UserData` folder next to it.
 
 > [!CAUTION]
 > Only take builds from this repository's
-> [Releases](https://github.com/WitherBlitz/NSMB-Wii-Decompilation/releases) page. If someone's
+> [Releases](https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases) page. If someone's
 > sharing an APK or zip anywhere else, don't touch it.
 
 ## Controls
@@ -147,13 +148,33 @@ page:
 
 A game controller also works on Windows as a sideways Wii Remote.
 
-## LAN multiplayer
+## LAN and Tailscale multiplayer
 
-1. Everyone opens the game on the same Wi-Fi network (every player needs their own game files).
-2. One player picks **LAN** on the save file screen, then **Create Room** and how many are playing.
-3. The others pick **LAN**, then **Join**, and choose the room.
-4. The host starts the room. Every device restarts into the session with the host's save, and the
+Up to 4 players, on any mix of phones and PCs. Every player needs their own game files.
+
+1. One player picks **LAN** on the save file screen, then **Create Room** and how many are playing.
+2. The others pick **LAN**, then **Join**, and choose the room from the list.
+3. The host starts the room. Every device restarts into the session with the host's save, and the
    game goes to the player select by itself.
+
+**Same Wi-Fi:** rooms show up by themselves.
+
+**Over the internet, with Tailscale:** install [Tailscale](https://tailscale.com) on every device
+and sign in to the same tailnet (or [share a device](https://tailscale.com/kb/1084/sharing) with
+friends). Tailscale can't broadcast, so the game finds rooms there like this:
+
+- A **PC** asks every device in `tailscale status`, and a PC's room is announced to every Tailscale
+  device, so it shows up on the phones by themselves.
+- Devices **remember** the Tailscale devices they meet (on the same Wi-Fi or over Tailscale) and
+  **pass them on**: once any device has seen another, every game device on the tailnet learns it.
+- To find another **phone** the very first time with no PC around, add its Tailscale name (as shown
+  in the Tailscale app, e.g. `s26-ultra`) or its 100.x address under **Tailscale & LAN Devices**:
+  on the start menu or the in-game ⋯ menu on Android, or **F10 > LAN Play** on Windows. Those
+  screens also show the device's own addresses to tell others. Only one of the two needs to add the
+  other.
+
+Rooms on the same Wi-Fi are always used over the Wi-Fi, even when Tailscale is on. Tailscale play
+was tested between the Windows PC and the REVVL 7 over Tailscale alone, in both directions.
 
 Windows asks to let the game through the firewall the first time you host a room; allow it, or
 others can't find your room. **Couch** is the normal local multiplayer on one device.
@@ -211,7 +232,7 @@ Open an issue with your device, what you did, and (on Windows) the log from `Use
 `NSMBW.exe`.
 
 **Is it done?**
-No, this is 0.0.1. It boots and plays on the tested devices, but not every level has been checked,
+No, this is 0.0.2. It boots and plays on the tested devices, but not every level has been checked,
 and rendering, performance and LAN play are still being worked on.
 
 ## AI usage
