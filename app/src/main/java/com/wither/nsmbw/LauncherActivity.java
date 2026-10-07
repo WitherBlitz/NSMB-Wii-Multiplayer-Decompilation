@@ -31,6 +31,8 @@ import java.util.List;
 /** Start screen: is the game data there, play, or import it from an extracted disc folder. */
 public final class LauncherActivity extends Activity {
     private static final int REQUEST_IMPORT = 1;
+    /** Set by GameActivity.restartForSession: open the game again once its old process is gone. */
+    static final String EXTRA_RESTART_GAME = "restartGame";
 
     private TextView status;
     private Button play;
@@ -73,6 +75,23 @@ public final class LauncherActivity extends Activity {
         final ScrollView scroll = new ScrollView(this);
         scroll.addView(column);
         setContentView(scroll);
+        restartGameIfAsked(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        restartGameIfAsked(intent);
+    }
+
+    /** Network play: the game asked to be started again into a LAN session. */
+    private void restartGameIfAsked(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_RESTART_GAME, false)) {
+            return;
+        }
+        intent.removeExtra(EXTRA_RESTART_GAME);
+        status.setText("Starting the LAN game...");
+        main.postDelayed(() -> startActivity(new Intent(this, GameActivity.class)), 700);
     }
 
     @Override

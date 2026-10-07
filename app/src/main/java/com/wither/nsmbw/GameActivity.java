@@ -1,7 +1,12 @@
 package com.wither.nsmbw;
 
 import android.app.AlertDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.os.Process;
 import android.system.Os;
 import android.util.Log;
@@ -30,6 +35,11 @@ public final class GameActivity extends SDLActivity
     /** "GPU name\n1|0": the GPU the game draws with and whether its compatibility fixes are on. */
     static native String nativeGraphicsInfo();
 
+    /** What this phone is called in LAN room lists (netplay). */
+    static native void nativeSetDeviceName(String name);
+
+    private WifiManager.MulticastLock multicastLock;
+
     private AppSettings settings;
     private boolean bootWidescreen;  // the game reads 4:3 versus widescreen once, when it starts
     private TouchControlsView touch;
@@ -55,6 +65,16 @@ public final class GameActivity extends SDLActivity
         }
         super.onCreate(savedInstanceState);
         nativeReady = !SDLActivity.mBrokenLibraries;
+        if (nativeReady) {
+            nativeSetDeviceName(deviceName());
+        }
+        // LAN rooms are found with broadcasts, which many Wi-Fi drivers drop unless an app holds this.
+        final WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wifi != null) {
+            multicastLock = wifi.createMulticastLock("nsmbw-lan");
+            multicastLock.setReferenceCounted(false);
+            multicastLock.acquire();
+        }
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         touch = new TouchControlsView(this);
@@ -102,8 +122,35 @@ public final class GameActivity extends SDLActivity
         onMenu();
     }
 
+    /** The name the user gave the phone, else its model. */
+    private String deviceName() {
+        String name = Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME);
+        if (name == null || name.trim().isEmpty()) {
+            name = Build.MODEL;
+        }
+        return name == null ? "Phone" : name.trim();
+    }
+
+    /**
+     * Network play: the runtime has written the session (netplay_start.cpp); start the game again in a
+     * fresh process. The launcher waits for this one to end, then opens the game, which finds the
+     * session and boots into it. Called from the game thread.
+     */
+    void restartForSession() {
+        runOnUiThread(() -> {
+            final Intent intent = new Intent(this, LauncherActivity.class)
+                    .putExtra(LauncherActivity.EXTRA_RESTART_GAME, true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(intent);
+            finish();
+        });
+    }
+
     @Override
     protected void onDestroy() {
+        if (multicastLock != null && multicastLock.isHeld()) {
+            multicastLock.release();
+        }
         super.onDestroy();
         if (isFinishing()) {
             // The runtime starts once per process; the next start must get a fresh one.
