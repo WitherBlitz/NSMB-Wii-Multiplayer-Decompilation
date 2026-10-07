@@ -69,9 +69,9 @@ On Android, the app can open straight into the game; the ⋯ menu's **Start Menu
 
 | Device | Chipset | GPU | Android | Result |
 | --- | --- | --- | --- | --- |
-| Samsung Galaxy S26 Ultra (SM-S948U) | Qualcomm Snapdragon 8 Elite Gen 5 for Galaxy (SM8850) | Adreno 840 | 16 | Full speed |
+| Samsung Galaxy S26 Ultra (SM-S948U) | Qualcomm Snapdragon 8 Elite Gen 5 for Galaxy (SM8850) | Adreno 840 | 16 | 60 fps, LAN play |
 | T-Mobile REVVL 7 5G (TMRV075G) | Qualcomm Snapdragon 6 Gen 1 (SM6450) | Adreno 710 | 14 | 60 fps, LAN play |
-| Windows 10 PC | AMD Ryzen 5 5600G | NVIDIA GeForce RTX 5070 | - | 60 fps, LAN play with the REVVL |
+| Windows 10 PC | AMD Ryzen 5 5600G | NVIDIA GeForce RTX 5070 | - | 60 fps, LAN play with the phones |
 
 > [!WARNING]
 > **Untested on Mali GPUs** (most phones with MediaTek, Samsung Exynos or Google Tensor chips).
