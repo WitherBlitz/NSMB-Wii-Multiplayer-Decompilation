@@ -238,6 +238,7 @@ struct Session {
     uint32_t frame = 0;
     int waitingFor = -1;
     Clock::time_point waitStart{};
+    int lostSlot = -1;
     std::atomic<bool> stop{false};
     std::thread thread;
     Clock::time_point start = Clock::now();
@@ -251,6 +252,7 @@ struct Session {
 
 Session* g_session = nullptr;
 std::atomic<bool> g_active{false};
+StallHandler g_stallHandler = nullptr;
 
 void WriteHeader(Writer& w, const Session& s, PacketType type) {
     w.U32(kMagic);
@@ -634,8 +636,21 @@ void FrameSource(uint32_t retrace, FrameInput::Frame& frame) {
             s.waitStart = Clock::now();
         }
         s.waitingFor = missing;
-        s.inputArrived.wait_for(lock, std::chrono::milliseconds(100));
+        s.inputArrived.wait_for(lock, std::chrono::milliseconds(50));
         const auto waitedFor = Clock::now() - s.waitStart;
+        // A device silent this long is gone (closed, crashed, out of range). Clients hear everyone
+        // through the host, so for them it is the host that went quiet.
+        const int path = s.IsHost() ? missing : 0;
+        if (s.lostSlot < 0 && waitedFor > std::chrono::seconds(12) &&
+            Clock::now() - s.remotes[path].lastHeard > std::chrono::seconds(12)) {
+            s.lostSlot = missing;
+            RT_LOGF(RT_TAG_RUNTIME, "netplay: lost player %d\n", missing + 1);
+        }
+        if (waitedFor > std::chrono::milliseconds(1000) && g_stallHandler != nullptr) {
+            lock.unlock();
+            g_stallHandler();
+            lock.lock();
+        }
         static Clock::time_point lastReport{};
         if (waitedFor > std::chrono::seconds(2) && Clock::now() - lastReport > std::chrono::seconds(2)) {
             lastReport = Clock::now();
@@ -779,6 +794,10 @@ bool Active() {
     return g_active.load(std::memory_order_acquire);
 }
 
+void SetStallHandler(StallHandler handler) {
+    g_stallHandler = handler;
+}
+
 Status GetStatus() {
     Status status;
     if (!Active()) {
@@ -796,6 +815,7 @@ Status GetStatus() {
             std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - s.waitStart).count());
     }
     status.desyncFrame = s.desyncFrame;
+    status.lostSlot = s.lostSlot;
     for (int slot = 0; slot < kMaxSlots; ++slot) {
         status.pingMs[slot] = s.remotes[slot].rttMs;
     }

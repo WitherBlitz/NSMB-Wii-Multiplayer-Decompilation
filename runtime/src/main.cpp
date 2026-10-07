@@ -59,6 +59,7 @@
 #include <sys/system_properties.h>
 #endif
 
+#include "netplay_ui.h"
 #include "netplay_start.h"
 #include "netplay_session.h"
 #include "frame_input.h"
@@ -1391,6 +1392,7 @@ int RuntimeMain(int argc, char** argv) {
             } else if (NetplaySession::LoadConfigFromEnvironment(netplay)) {
                 NetplaySession::Start(netplay);
             }
+            NetplaySession::SetStallHandler(&NetplayUi::OnSessionStall);
         }
         if (RuntimeConfigFile::DiscordPresenceEnabled()) {
             DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Kart Wii");

@@ -102,9 +102,31 @@ bool Restart(const NetplayLobby::Plan& plan) {
     RestartProcess();
 }
 
+std::filesystem::path HostMarker() {
+    return SessionNand() / ".host";
+}
+
+// A host that closed the game during a session never went through EndSession: bring the session's
+// save back now, before anything reads the NAND.
+void RecoverHostSave() {
+    std::error_code ec;
+    if (!std::filesystem::exists(HostMarker(), ec)) {
+        return;
+    }
+    const auto played = SessionNand() / std::filesystem::u8path(kSaveFile);
+    const auto mine = RuntimeNandPath::ResolveNandRootPath() / std::filesystem::u8path(kSaveFile);
+    if (std::filesystem::exists(played, ec)) {
+        std::filesystem::copy_file(played, mine, std::filesystem::copy_options::overwrite_existing, ec);
+        RT_LOGF(RT_TAG_RUNTIME, "netplay: kept the save from the last session you hosted (%s)\n",
+                ec ? ec.message().c_str() : "ok");
+    }
+    std::filesystem::remove(HostMarker(), ec);
+}
+
 bool TakePendingSession(NetplaySession::Config& config, int& saveFile) {
     std::ifstream in(SessionFile());
     if (!in) {
+        RecoverHostSave();
         return false;
     }
     std::map<std::string, std::string> values;
@@ -147,6 +169,9 @@ bool TakePendingSession(NetplaySession::Config& config, int& saveFile) {
     }
     g_names = names;
     g_isHost = config.localSlot == 0;
+    if (g_isHost) {
+        std::ofstream(HostMarker()) << "1\n";
+    }
     RuntimeNandPath::NandRootOverride() = SessionNand();
     return true;
 }
@@ -155,9 +180,11 @@ const std::vector<std::string>& SessionNames() {
     return g_names;
 }
 
-void EndSession() {
+void PrepareToLeave() {
     // The host keeps what was played: the session's save goes back over the player's own.
     if (g_isHost) {
+        std::error_code markerError;
+        std::filesystem::remove(HostMarker(), markerError);
         std::error_code ec;
         RuntimeNandPath::NandRootOverride().clear();
         const auto mine = RuntimeNandPath::ResolveNandRootPath() / std::filesystem::u8path(kSaveFile);
@@ -169,6 +196,10 @@ void EndSession() {
     }
     std::error_code ec;
     std::filesystem::remove(SessionFile(), ec);
+}
+
+void EndSession() {
+    PrepareToLeave();
     WindowPlacementPersistence::Flush(true);
     RestartProcess();
 }

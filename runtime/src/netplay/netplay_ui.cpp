@@ -7,13 +7,22 @@
 #include "netplay_start.h"
 #include "runtime_log.h"
 
+#include "aurora_events.h"
+#include "hle_stubs.h"
+#include "settings_overlay.h"
+
 #include <imgui.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <string>
 #include <vector>
+
+// Defined in hle/vi.cpp: whether an aurora frame is open for drawing.
+extern std::atomic_bool g_auroraFrameActive;
 
 namespace NetplayUi {
 namespace {
@@ -330,7 +339,13 @@ void DrawMessage(const Canvas& c) {
     Button(c, "OK", 0, -150 + 43.0f, 232, true, true, g_ui.frame);
 }
 
-// What the session shows: who the game is waiting for, and a desync warning.
+std::string SlotName(int slot) {
+    const auto& names = NetplayStart::SessionNames();
+    return slot >= 0 && slot < static_cast<int>(names.size()) ? names[slot] : "player " + std::to_string(slot + 1);
+}
+
+// What the session shows: who the game is waiting for, a desync warning, and the way out when a
+// player is gone (the game can't go on without them).
 void DrawSession(ImDrawList* list) {
     const NetplaySession::Status status = NetplaySession::GetStatus();
     if (!status.active) {
@@ -338,13 +353,30 @@ void DrawSession(ImDrawList* list) {
     }
     const GameLayout::View view = GameLayout::GameView();
     Canvas c{list, view, 1.0f};
+    if (status.lostSlot >= 0) {
+        // The game is frozen: read the remote directly.
+        static uint32_t prevHold = ~0u;
+        WiiRemoteInput::KpadSample sample;
+        uint32_t hold = 0;
+        if (WiiRemoteInput::ReadKpadSample(0, sample)) {
+            hold = sample.hold;
+        }
+        const bool confirm = prevHold != ~0u && (hold & ~prevHold & (kTwo | kA)) != 0;
+        prevHold = hold;
+        ++g_ui.frame;
+        Veil(c);
+        Window(c, 300);
+        Text(c, "Lost the connection to", 0, 50);
+        Text(c, SlotName(status.lostSlot) + ".", 0, 15);
+        Button(c, "OK", 0, -150 + 43.0f, 232, true, true, g_ui.frame);
+        if (confirm) {
+            NetplayStart::EndSession();
+        }
+        return;
+    }
     std::string line;
     if (status.waitingForSlot >= 0 && status.waitedMs > 700) {
-        const auto& names = NetplayStart::SessionNames();
-        const std::string who = status.waitingForSlot < static_cast<int>(names.size())
-                                    ? names[status.waitingForSlot]
-                                    : "player " + std::to_string(status.waitingForSlot + 1);
-        line = "Waiting for " + who + "...";
+        line = "Waiting for " + SlotName(status.waitingForSlot) + "...";
     } else if (status.desyncFrame != 0) {
         line = "The game got out of sync between devices.";
     }
@@ -444,6 +476,21 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
 }
 
 } // namespace
+
+void OnSessionStall() {
+    // At most ~30 presents a second: enough for the banner, cheap while nothing moves.
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::milliseconds(33)) {
+        return;
+    }
+    last = now;
+    UpdateAuroraAndProcessEvents();
+    if (g_auroraFrameActive.load(std::memory_order_acquire)) {
+        settings_overlay::Draw();
+        VI_HLE_PresentFrame(/*presentedXfb=*/false, /*paceToRetrace=*/false);
+    }
+}
 
 void Draw() {
     ImDrawList* list = ImGui::GetBackgroundDrawList();

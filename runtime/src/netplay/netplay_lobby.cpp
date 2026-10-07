@@ -120,6 +120,7 @@ struct HostMember {
 
 struct FoundRoom {
     Room room;
+    std::vector<uint32_t> hostIps;  // every address the host has
     Netplay::Address address;
     Clock::time_point lastSeen{};
 };
@@ -142,6 +143,7 @@ struct State {
     std::vector<Netplay::Address> unicastTargets;
     Netplay::Address hostAddress;
     uint64_t joinRoomId = 0;
+    std::vector<uint32_t> joinHostIps;
     uint32_t nonce = 0;
     uint8_t localSlot = 0;
     std::string roomName;
@@ -364,6 +366,13 @@ void HostPacketLocked(State& s, const Netplay::Address& from, uint8_t type, uint
         w.U8(s.maxPlayers);
         w.U8(static_cast<uint8_t>(1 + s.members.size()));
         w.U8(s.phase == Phase::Hosting ? 1 : 0);
+        // Every address this device has (LAN and Tailscale): whoever joins remembers them all, so
+        // the room is found again from elsewhere, where broadcasts don't reach.
+        const auto interfaces = Netplay::LocalInterfaces();
+        w.U8(static_cast<uint8_t>(std::min<size_t>(interfaces.size(), 8)));
+        for (size_t i = 0; i < interfaces.size() && i < 8; ++i) {
+            w.U32(interfaces[i].ip);
+        }
         Send(s, from, kRoomInfo, s.roomId, w.data);
         return;
     }
@@ -533,6 +542,10 @@ void MemberPacketLocked(State& s, const Netplay::Address& from, uint8_t type, ui
         if (r.bad) {
             return;
         }
+        const uint8_t addressCount = r.U8();
+        for (uint8_t i = 0; i < addressCount && !r.bad; ++i) {
+            found.hostIps.push_back(r.U32());
+        }
         found.room.full = !accepting || found.room.players >= found.room.maxPlayers;
         found.room.address = Netplay::ToString(from);
         found.room.tailscale = Netplay::IsTailscaleIp(from.ip);
@@ -567,6 +580,11 @@ void MemberPacketLocked(State& s, const Netplay::Address& from, uint8_t type, ui
         s.localSlot = slot;
         s.phase = Phase::InRoom;
         RememberHost(from);
+        for (const uint32_t ip : s.joinHostIps) {
+            if (ip != from.ip && (ip >> 24) != 127) {
+                RememberHost(Netplay::Address{ip, Netplay::kDefaultPort});
+            }
+        }
         RT_LOGF(RT_TAG_RUNTIME, "netplay: joined the room at %s as player %u\n", Netplay::ToString(from).c_str(), slot + 1);
         return;
     }
@@ -885,6 +903,7 @@ void Join(uint64_t roomId) {
     }
     s.hostAddress = it->address;
     s.joinRoomId = roomId;
+    s.joinHostIps = it->hostIps;
     s.roomName = it->room.name;
     s.maxPlayers = it->room.maxPlayers;
     std::random_device random;

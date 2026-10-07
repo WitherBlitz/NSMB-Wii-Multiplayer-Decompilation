@@ -8,6 +8,8 @@
 #include "virtual_remote.h"
 
 #include "netplay/net_socket.h"
+#include "netplay_session.h"
+#include "netplay_start.h"
 
 #include <SDL3/SDL_system.h>
 #include <jni.h>
@@ -90,6 +92,18 @@ JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeSetDeviceName(JN
         Netplay::SetDeviceName(utf8);
         env->ReleaseStringUTFChars(name, utf8);
     }
+}
+
+// GameActivity.nativeSessionActive: whether this run is a LAN session (the menu offers to leave it).
+JNIEXPORT jboolean JNICALL Java_com_wither_nsmbw_GameActivity_nativeSessionActive(JNIEnv*, jclass)
+{
+    return NetplaySession::Active() ? JNI_TRUE : JNI_FALSE;
+}
+
+// GameActivity.nativePrepareToLeave: the menu's "Leave LAN game", before the app restarts the game.
+JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativePrepareToLeave(JNIEnv*, jclass)
+{
+    NetplayStart::PrepareToLeave();
 }
 
 } // extern "C"

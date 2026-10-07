@@ -21,5 +21,8 @@ const std::vector<std::string>& SessionNames();
 
 // Leaves the session: restarts the game normally (the host keeps the session's save).
 void EndSession();
+// The part of EndSession that keeps the host's save and forgets the session, for a front end that
+// restarts the game itself (the Android menu).
+void PrepareToLeave();
 
 } // namespace NetplayStart

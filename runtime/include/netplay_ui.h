@@ -20,4 +20,8 @@ void Draw();
 // step the confirm press is taken from the game.
 void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample);
 
+// Network session stalls (NetplaySession::SetStallHandler): the game is frozen waiting for another
+// player, so keep the window responsive and present frames showing who it waits for.
+void OnSessionStall();
+
 } // namespace NetplayUi

@@ -46,8 +46,14 @@ struct Status {
     int waitingForSlot = -1;   // slot whose input the game is waiting for, -1 when not waiting
     uint32_t waitedMs = 0;     // how long the current wait has lasted
     uint32_t desyncFrame = 0;  // first frame two devices disagreed on, 0 = none
+    int lostSlot = -1;         // a player whose device stopped answering, -1 = none
     uint32_t pingMs[4] = {};   // round trip to each slot (host <-> client)
 };
 Status GetStatus();
+
+// Called on the game thread every ~50 ms while a frame waits for another player, so the host can
+// keep its window alive and show what the game is waiting for.
+using StallHandler = void (*)();
+void SetStallHandler(StallHandler handler);
 
 } // namespace NetplaySession
