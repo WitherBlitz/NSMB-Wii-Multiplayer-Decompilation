@@ -141,15 +141,15 @@ static bool IsDvdDataRoot(const fs::path& path) {
         std::fprintf(stderr, ": %s", HostPathText(path).c_str());
     }
     std::fprintf(stderr,
-                 "\n[dvd] Set [paths] dvd_root in Config.toml "
-                 "to your extracted Mario Kart Wii DATA directory.\n");
+                 "\n[dvd] Set [paths] dvd_root in Config.toml to your New Super Mario Bros. Wii, "
+                 "extracted with Dolphin's Extract Entire Disc.\n");
     std::string details = source ? source : "The configured DVD root could not be opened.";
     if (!path.empty()) {
         details += "\n\nPath: ";
         details += HostPathText(path);
     }
-    details += "\n\nSet [paths] dvd_root in Config.toml to the extracted "
-               "Mario Kart Wii DATA directory.";
+    details += "\n\nSet [paths] dvd_root in Config.toml to your New Super Mario Bros. Wii "
+               "(SMNE01 revision 1), extracted with Dolphin's Extract Entire Disc.";
     FailDvd("dvd_root", "DVD data is unavailable", details);
 }
 

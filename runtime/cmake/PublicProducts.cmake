@@ -84,7 +84,8 @@ target_link_libraries(mkw_runtime_common PRIVATE
     aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
 target_link_libraries(mkw_runtime_common PRIVATE mkw_platform mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
 if(MKW_PLATFORM_WINDOWS)
-    target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp)
+    # ole32/uuid: the first-start game folder picker (game_folder.cpp).
+    target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp ole32 uuid)
 elseif(MKW_PLATFORM_LINUX)
     # ${CMAKE_DL_LIBS} for music_attenuation.cpp's dlopen of libdbus-1 (MPRIS
     # media monitoring).

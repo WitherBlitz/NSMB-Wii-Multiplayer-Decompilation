@@ -1375,7 +1375,7 @@ void DrawTopBar() {
     ImGui::End();
     if (!ImGui::BeginMainMenuBar()) return;
 
-    ImGui::TextUnformatted("WiiCompiled");
+    ImGui::TextUnformatted("New Super Mario Bros. Wii");
     ImGui::Separator();
     const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
         return std::fabs(item.scale - g_resolutionScale) < 0.001f;

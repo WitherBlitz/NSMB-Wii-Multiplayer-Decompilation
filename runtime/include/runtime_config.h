@@ -299,7 +299,8 @@ inline void EnsureConfigFile() {
         return;
     }
     output << "# WiiCompiled user configuration\n"
-              "# Set paths.dvd_root to an extracted Mario Kart Wii DATA directory.\n\n"
+              "# paths.dvd_root is your New Super Mario Bros. Wii (SMNE01 rev 1), extracted with\n"
+              "# Dolphin's Extract Entire Disc. The game asks for it at first start.\n\n"
               "[video]\n"
               "widescreen = true\n"
               "force_16_9 = false\n"
@@ -339,7 +340,7 @@ inline void EnsureConfigFile() {
               "enabled = true\n"
               "# client_id = \"123456789012345678\"\n\n"
               "[paths]\n"
-              "# dvd_root = \"D:\\\\MarioKartWii\\\\DATA\"\n"
+              "# dvd_root = \"D:\\\\Games\\\\NSMBW\"\n"
               "# nand_root = \"D:\\\\WiiNand\"\n"
               "# retro_rewind_root = \"D:\\\\RetroRewind\\\\RetroRewind6\"\n"
               "# overlay_roots = [\"D:\\\\RetroRewind\"]\n";
@@ -1018,6 +1019,13 @@ inline std::filesystem::path ResolveRelativeToConfig(const std::string& value) {
 inline std::filesystem::path ResolvedDvdRoot() {
     const std::string configured = DvdRoot();
     return configured.empty() ? std::filesystem::path{} : ResolveRelativeToConfig(configured);
+}
+
+// The game folder the player picked at first start (GameFolder::EnsureConfigured).
+inline bool SetDvdRoot(const std::filesystem::path& path) {
+    const std::string value = PathToUtf8(path);
+    Mutable().dvdRoot = value;
+    return WriteSetting("paths", "dvd_root", FormatString(value));
 }
 
 /// The canonical Retro Rewind installation the frontend owns, or "" when none is recorded.

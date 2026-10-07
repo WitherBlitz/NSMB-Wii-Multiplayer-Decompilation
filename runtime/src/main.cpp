@@ -64,6 +64,7 @@
 #include "netplay_session.h"
 #include "frame_input.h"
 #include "det_clock.h"
+#include "game_folder.h"
 #include "abi_bridge.h"
 #include "guest_flat_memory.h"
 #include "gx_guest_write.h"
@@ -1346,6 +1347,12 @@ int RuntimeMain(int argc, char** argv) {
             throw std::invalid_argument("The game runtime does not accept command-line options; use Config.toml through the installed host.");
         }
         RuntimeConfigFile::LogLoadedConfig();
+        // The player's own extracted game (game_folder.h); on Windows it is asked for at first start.
+        if (!GameFolder::EnsureConfigured()) {
+            SetRuntimeExitCodeImpl(0);
+            ShutdownProcessTranscript();
+            return 0;
+        }
 #if defined(__ANDROID__)
         // Determinism testing on a phone: debug.nsmbw.det=1 turns the lockstep timing on,
         // debug.nsmbw.dethash / detdump set NSMBW_DET_HASH / NSMBW_DET_DUMP (det_hash.h) and
@@ -1395,7 +1402,7 @@ int RuntimeMain(int argc, char** argv) {
             NetplaySession::SetStallHandler(&NetplayUi::OnSessionStall);
         }
         if (RuntimeConfigFile::DiscordPresenceEnabled()) {
-            DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Kart Wii");
+            DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "New Super Mario Bros. Wii");
         }
         SystemBridge::Initialize();
         TranslatedFunctionRegistry::Finalize();
