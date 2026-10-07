@@ -33,6 +33,11 @@ public final class LauncherActivity extends Activity {
     private static final int REQUEST_IMPORT = 1;
     /** Set by GameActivity.restartForSession: open the game again once its old process is gone. */
     static final String EXTRA_RESTART_GAME = "restartGame";
+    /** Set by the game's "Start Menu": show this screen even with Skip Start Menu on. */
+    static final String EXTRA_SHOW_START_MENU = "showStartMenu";
+
+    private AppSettings settings;
+    private Button skip;
 
     private TextView status;
     private Button play;
@@ -41,6 +46,18 @@ public final class LauncherActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        settings = new AppSettings(this);
+        // Skip Start Menu: straight into the game, unless the game sent the player here or is
+        // restarting itself into a LAN session.
+        final Intent launch = getIntent();
+        final boolean asked = launch != null && (launch.getBooleanExtra(EXTRA_SHOW_START_MENU, false)
+                || launch.getBooleanExtra(EXTRA_RESTART_GAME, false));
+        if (savedInstanceState == null && !asked && settings.skipStartMenu() && AppFiles.hasGameData(this)) {
+            startActivity(new Intent(this, GameActivity.class));
+            overridePendingTransition(0, 0);
+            finish();
+            return;
+        }
         final int pad = dp(24);
         final LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -59,6 +76,19 @@ public final class LauncherActivity extends Activity {
         play = button("Play");
         play.setOnClickListener(v -> startActivity(new Intent(this, GameActivity.class)));
         column.addView(play);
+
+        skip = button("");
+        skip.setOnClickListener(v -> {
+            settings.setSkipStartMenu(!settings.skipStartMenu());
+            updateSkipButton();
+        });
+        column.addView(skip);
+        final TextView skipHelp = text("On: opening the app goes straight into the game. "
+                + "In the game, the ⋯ menu's Start Menu brings you back here.", 13);
+        skipHelp.setTextColor(Color.rgb(170, 178, 186));
+        skipHelp.setPadding(0, dp(4), 0, 0);
+        column.addView(skipHelp);
+        updateSkipButton();
 
         final Button importButton = button("Import Game Folder…");
         importButton.setOnClickListener(v -> pickFolder());
@@ -98,6 +128,10 @@ public final class LauncherActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+    }
+
+    private void updateSkipButton() {
+        skip.setText("Skip Start Menu: " + (settings.skipStartMenu() ? "On" : "Off"));
     }
 
     private void refresh() {

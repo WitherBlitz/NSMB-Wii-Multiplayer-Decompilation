@@ -126,6 +126,17 @@ public final class GameActivity extends SDLActivity
         onMenu();
     }
 
+    /** "Start Menu" (with Skip Start Menu on): back to the launcher; the game's process ends. */
+    private void openStartMenu(boolean inSession) {
+        if (inSession) {
+            nativePrepareToLeave();  // the host keeps the session's progress
+        }
+        startActivity(new Intent(this, LauncherActivity.class)
+                .putExtra(LauncherActivity.EXTRA_SHOW_START_MENU, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        finish();
+    }
+
     /** "Leave LAN Game": keep the host's progress, then start the game again on its own. */
     private void leaveSession() {
         nativePrepareToLeave();
@@ -215,15 +226,20 @@ public final class GameActivity extends SDLActivity
     public void onMenu() {
         touch.release();
         final boolean inSession = nativeReady && nativeSessionActive();
-        final String[] items = inSession
-                ? new String[] {"Display", "Controls", "Leave LAN Game", "Quit Game"}
-                : new String[] {"Display", "Controls", "Quit Game"};
+        final java.util.List<String> items = new java.util.ArrayList<>();
+        items.add("Display");
+        items.add("Controls");
+        if (inSession) items.add("Leave LAN Game");
+        if (settings.skipStartMenu()) items.add("Start Menu");
+        items.add("Quit Game");
         new AlertDialog.Builder(this)
                 .setTitle("Menu")
-                .setItems(items, (dialog, which) -> {
-                    if (which == 0) showDisplayMenu();
-                    else if (which == 1) showControlsMenu();
-                    else if (inSession && which == 2) leaveSession();
+                .setItems(items.toArray(new String[0]), (dialog, which) -> {
+                    final String item = items.get(which);
+                    if (item.equals("Display")) showDisplayMenu();
+                    else if (item.equals("Controls")) showControlsMenu();
+                    else if (item.equals("Leave LAN Game")) leaveSession();
+                    else if (item.equals("Start Menu")) openStartMenu(inSession);
                     else finish();
                 })
                 .setNegativeButton("Back", null)

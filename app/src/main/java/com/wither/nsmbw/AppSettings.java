@@ -53,6 +53,10 @@ final class AppSettings {
     boolean haptics() { return prefs.getBoolean("haptics", true); }
     void setHaptics(boolean on) { prefs.edit().putBoolean("haptics", on).commit(); }
 
+    /** Open the game straight away when the app starts; the in-game menu leads back here. */
+    boolean skipStartMenu() { return prefs.getBoolean("skip_start_menu", false); }
+    void setSkipStartMenu(boolean on) { prefs.edit().putBoolean("skip_start_menu", on).commit(); }
+
     /** "2× (960p)": the scale and the number of lines it renders, as the menu shows it. */
     static String resolutionLabel(float scale) {
         final String factor = scale == Math.rint(scale)
