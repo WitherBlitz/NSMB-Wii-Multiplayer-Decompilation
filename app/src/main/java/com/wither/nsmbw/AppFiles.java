@@ -48,6 +48,58 @@ final class AppFiles {
 
     static boolean hasGameData(Context context) { return isGameRoot(gameDir(context)); }
 
+    /** Imported, and the one game and revision this port runs. */
+    static boolean gameReady(Context context) {
+        return hasGameData(context) && gameProblem(gameDir(context)) == null;
+    }
+
+    /** Why the extracted game at `root` can't be played, or null when it can. */
+    static String gameProblem(File root) {
+        if (!isGameRoot(root)) {
+            return "That isn't an extracted game: it needs the files and sys folders Dolphin's "
+                    + "Extract Entire Disc makes.";
+        }
+        final byte[] header = new byte[8];
+        try (InputStream in = new FileInputStream(new File(root, "sys/boot.bin"))) {
+            if (readFully(in, header) < header.length) {
+                return "Its sys/boot.bin is too short, so the game can't be identified.";
+            }
+        } catch (IOException e) {
+            return "It has no sys/boot.bin, so the game can't be identified.";
+        }
+        return headerProblem(header);
+    }
+
+    /**
+     * The first 8 bytes of sys/boot.bin name the game (6 characters) and its revision (byte 7).
+     * This port runs only the USA disc, revision 1: other revisions put the game's code elsewhere.
+     */
+    static String headerProblem(byte[] header) {
+        final String id = new String(header, 0, 6, StandardCharsets.US_ASCII);
+        final int revision = header[7] & 0xFF;
+        if (!id.equals("SMNE01")) {
+            return "That is " + id.trim() + ", not New Super Mario Bros. Wii for the USA (SMNE01). "
+                    + "This port runs only the USA disc, revision 1.";
+        }
+        if (revision != 1) {
+            return "That is New Super Mario Bros. Wii revision " + revision + ". This port runs only "
+                    + "revision 1 (Dolphin shows it under Properties > Info).";
+        }
+        return null;
+    }
+
+    static int readFully(InputStream in, byte[] buffer) throws IOException {
+        int total = 0;
+        while (total < buffer.length) {
+            final int read = in.read(buffer, total, buffer.length - total);
+            if (read <= 0) {
+                break;
+            }
+            total += read;
+        }
+        return total;
+    }
+
     /** Unpacks assets/runtime when this APK has not done it yet. */
     static void prepareRuntime(Context context) throws IOException {
         final File dir = runtimeDir(context);
