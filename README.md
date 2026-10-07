@@ -15,7 +15,7 @@ recompilation.
 
 There's no emulator in the loop, no interpreter, no JIT, no PowerPC anywhere at runtime.
 
-**This port was made by [WitherBlitz](https://github.com/WitherBlitz) with the use of
+**Port made by [WitherBlitz](https://github.com/WitherBlitz) with the help of
 [WiiCompiled](https://github.com/patchzyy/Wiicompiled)'s code, and was entirely coded by
 Claude Opus 5.5.**
 
