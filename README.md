@@ -1,8 +1,8 @@
-# NSMB Wii Decompilation - LAN Multiplayer
+# NSMB Wii Multiplayer Decompilation
 
 <p align="center">
-  <a href="https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases/latest"><img alt="Android 11+, arm64" src="https://img.shields.io/badge/Android-11%2B%20%C2%B7%20arm64-3DDC84?logo=android&amp;logoColor=white"></a>
-  <a href="https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases/latest"><img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4"></a>
+  <a href="https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest"><img alt="Android 11+, arm64" src="https://img.shields.io/badge/Android-11%2B%20%C2%B7%20arm64-3DDC84?logo=android&amp;logoColor=white"></a>
+  <a href="https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest"><img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4"></a>
 </p>
 <p align="center">
   <a href="#building-from-source"><img alt="PowerPC static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A"></a>
@@ -120,7 +120,7 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 
 ## Installing
 
-Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases/latest)
+Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest)
 page:
 
 - **Android:** `NSMBW-0.0.3-android-arm64.apk`. Open it on your phone and allow installing from that
@@ -130,7 +130,7 @@ page:
 
 > [!CAUTION]
 > Only take builds from this repository's
-> [Releases](https://github.com/WitherBlitz/NSMB-Wii-Decompilation-LAN-Multiplayer/releases) page. If someone's
+> [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases) page. If someone's
 > sharing an APK or zip anywhere else, don't touch it.
 
 ## Controls
