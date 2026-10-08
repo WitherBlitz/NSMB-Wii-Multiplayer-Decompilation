@@ -167,7 +167,19 @@ public final class GameActivity extends SDLActivity
         onMenu();
     }
 
-    /** "Start Menu" (with Skip Start Menu on): back to the launcher; the game's process ends. */
+    /** SDL takes the Back key as keyboard input before onBackPressed: the Back menu gets it first. */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP && !event.isCanceled()) {
+                onMenu();
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    /** "Start Menu": back to the launcher (its settings, Skip Start Menu); the game's process ends. */
     private void openStartMenu(boolean inSession) {
         if (inSession) {
             nativePrepareToLeave();  // the host keeps the session's progress
@@ -263,222 +275,28 @@ public final class GameActivity extends SDLActivity
 
     // --- menu ----------------------------------------------------------------------------------
 
+    /**
+     * The phone's Back gesture: back to the start menu (where the settings are), leave a LAN game,
+     * or quit. There is no on-screen menu button; the game's own settings window (the gear on the
+     * save file screen and the pause menus) covers resolution and the FPS counter while playing.
+     */
     @Override
     public void onMenu() {
         touch.release();
         final boolean inSession = nativeReady && nativeSessionActive();
         final java.util.List<String> items = new java.util.ArrayList<>();
-        items.add("Display");
-        items.add("Controls");
-        items.add("Tailscale & LAN Devices");
+        items.add("Start Menu");
         if (inSession) items.add("Leave LAN Game");
-        if (settings.skipStartMenu()) items.add("Start Menu");
         items.add("Quit Game");
         new AlertDialog.Builder(this)
-                .setTitle("Menu")
+                .setTitle("New Super Mario Bros. Wii")
                 .setItems(items.toArray(new String[0]), (dialog, which) -> {
                     final String item = items.get(which);
-                    if (item.equals("Display")) showDisplayMenu();
-                    else if (item.equals("Controls")) showControlsMenu();
-                    else if (item.equals("Tailscale & LAN Devices")) DevicesDialog.show(this);
+                    if (item.equals("Start Menu")) openStartMenu(inSession);
                     else if (item.equals("Leave LAN Game")) leaveSession();
-                    else if (item.equals("Start Menu")) openStartMenu(inSession);
                     else finish();
                 })
-                .setNegativeButton("Back", null)
-                .show();
-    }
-
-    private void showDisplayMenu() {
-        final String[] items = {
-            "Aspect Ratio: " + aspectLabel(settings.aspectMode()),
-            "Render Resolution: " + AppSettings.resolutionLabel(settings.resolutionScale()),
-            "FPS Counter: " + (settings.showFps() ? "On" : "Off"),
-            "Graphics Compatibility: " + gpuCompatLabel(),
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Display")
-                .setItems(items, (dialog, which) -> {
-                    if (which == 0) showAspectChoice();
-                    else if (which == 1) showResolutionChoice();
-                    else if (which == 2) { settings.setShowFps(!settings.showFps()); displayChanged(); showDisplayMenu(); }
-                    else showGpuCompatChoice();
-                })
-                .setNegativeButton("Back", (dialog, which) -> onMenu())
-                .show();
-    }
-
-    /** [GPU name, "1" or "0"], or null before the renderer has started. */
-    private String[] graphicsInfo() {
-        if (!nativeReady) return null;
-        try {
-            final String info = nativeGraphicsInfo();
-            final String[] parts = info == null ? new String[0] : info.split("\n", 2);
-            return parts.length == 2 ? parts : null;
-        } catch (UnsatisfiedLinkError e) {
-            return null;
-        }
-    }
-
-    /** "Auto (on for Adreno (TM) 840)": the setting, and for Auto what the game chose for this GPU. */
-    private String gpuCompatLabel() {
-        final int mode = settings.gpuCompat();
-        if (mode == AppSettings.GPU_COMPAT_ON) return "On";
-        if (mode == AppSettings.GPU_COMPAT_OFF) return "Off";
-        final String[] info = graphicsInfo();
-        if (info == null) return "Auto";
-        return "Auto (" + ("1".equals(info[1]) ? "on" : "off") + " for " + info[0] + ")";
-    }
-
-    /**
-     * Fixes for phone GPUs whose drivers break the game's 3D models (scrambled textures, exploding
-     * characters). Auto turns them on for the GPU the game detects; On and Off force them.
-     */
-    private void showGpuCompatChoice() {
-        final String[] info = graphicsInfo();
-        final String[] labels = {
-            "Auto (recommended)" + (info != null ? ": " + ("1".equals(info[1]) ? "on" : "off") + " for " + info[0] : ""),
-            "On: always use the GPU fixes",
-            "Off: never use them",
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Graphics Compatibility")
-                .setSingleChoiceItems(labels, settings.gpuCompat(), (dialog, which) -> {
-                    final boolean changed = which != settings.gpuCompat();
-                    settings.setGpuCompat(which);
-                    try {
-                        AppFiles.writeConfig(this, settings);
-                    } catch (Exception e) {
-                        Log.e(TAG, "could not save the graphics compatibility setting", e);
-                    }
-                    if (changed) {
-                        Toast.makeText(this, "Graphics Compatibility applies the next time the game starts",
-                                Toast.LENGTH_LONG).show();
-                    }
-                    dialog.dismiss();
-                    showDisplayMenu();
-                })
-                .setNegativeButton("Back", (dialog, which) -> showDisplayMenu())
-                .show();
-    }
-
-    private static String aspectLabel(int mode) {
-        switch (mode) {
-            case AppSettings.ASPECT_4_3: return "Original 4:3";
-            case AppSettings.ASPECT_16_9: return "16:9";
-            default: return "Fill Screen";
-        }
-    }
-
-    private void showAspectChoice() {
-        final String[] labels = {"Original 4:3", "16:9", "Fill Screen"};
-        new AlertDialog.Builder(this)
-                .setTitle("Aspect Ratio")
-                .setSingleChoiceItems(labels, settings.aspectMode(), (dialog, which) -> {
-                    settings.setAspectMode(which);
-                    displayChanged();
-                    dialog.dismiss();
-                    showDisplayMenu();
-                })
-                .setNegativeButton("Back", (dialog, which) -> showDisplayMenu())
-                .show();
-    }
-
-    /** The aspect the game actually renders: Fill follows the screen, never narrower than 16:9. */
-    private float renderAspect() {
-        switch (settings.aspectMode()) {
-            case AppSettings.ASPECT_4_3: return 4f / 3f;
-            case AppSettings.ASPECT_16_9: return 16f / 9f;
-            default: {
-                final android.view.View decor = getWindow().getDecorView();
-                final int w = Math.max(decor.getWidth(), decor.getHeight());
-                final int h = Math.min(decor.getWidth(), decor.getHeight());
-                return h > 0 ? Math.max((float) w / h, 16f / 9f) : 16f / 9f;
-            }
-        }
-    }
-
-    private void showResolutionChoice() {
-        final float[] scales = AppSettings.RESOLUTION_SCALES;
-        final String[] labels = new String[scales.length];
-        final float aspect = renderAspect();
-        int selected = 3;
-        for (int i = 0; i < scales.length; ++i) {
-            if (scales[i] <= 0f) {
-                final android.util.DisplayMetrics m = getResources().getDisplayMetrics();
-                labels[i] = AppSettings.resolutionLabel(0f) + "  ·  " + Math.max(m.widthPixels, m.heightPixels)
-                        + "×" + Math.min(m.widthPixels, m.heightPixels);
-                if (settings.resolutionScale() <= 0f) selected = i;
-                continue;
-            }
-            final int lines = Math.round(480 * scales[i]);
-            labels[i] = AppSettings.resolutionLabel(scales[i]) + "  ·  " + Math.round(lines * aspect) + "×" + lines;
-            if (Math.abs(scales[i] - settings.resolutionScale()) < 0.01f) selected = i;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("Render Resolution")
-                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
-                    settings.setResolutionScale(scales[which]);
-                    displayChanged();
-                    dialog.dismiss();
-                    showDisplayMenu();
-                })
-                .setNegativeButton("Back", (dialog, which) -> showDisplayMenu())
-                .show();
-    }
-
-    /**
-     * Display changes apply at once (the runtime picks them up at the next frame) and are saved to
-     * Config.toml for the next start. Only 4:3 versus widescreen waits for a restart, because the
-     * game asks for its aspect once, while it boots.
-     */
-    private void displayChanged() {
-        try {
-            AppFiles.writeConfig(this, settings);
-        } catch (Exception e) {
-            Log.e(TAG, "could not save the display settings", e);
-        }
-        if (nativeReady) {
-            try {
-                nativeApplyDisplaySettings(settings.aspectMode(), settings.resolutionScale(), settings.showFps());
-            } catch (UnsatisfiedLinkError e) {
-                Log.e(TAG, "display bridge missing from libmain.so", e);
-            }
-        }
-        if ((settings.aspectMode() != AppSettings.ASPECT_4_3) != bootWidescreen) {
-            Toast.makeText(this, "Switching between 4:3 and widescreen applies the next time the game starts",
-                    Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void showControlsMenu() {
-        final String[] items = {
-            "Touch Controls: " + (settings.touchControls() ? "On" : "Off"),
-            "Touch Control Opacity: " + Math.round(settings.touchOpacity() * 100) + "%",
-            "Tilt (turn the phone): " + (settings.motionTilt() ? "On" : "Off"),
-            "Shake (jolt the phone): " + (settings.motionShake() ? "On" : "Off"),
-            "Vibration: " + (settings.haptics() ? "On" : "Off"),
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Controls")
-                .setItems(items, (dialog, which) -> {
-                    switch (which) {
-                        case 0: settings.setTouchControls(!settings.touchControls()); break;
-                        case 1: {
-                            final float next = settings.touchOpacity() >= 0.95f ? 0.2f : settings.touchOpacity() + 0.2f;
-                            settings.setTouchOpacity(Math.min(1f, next));
-                            break;
-                        }
-                        case 2: settings.setMotionTilt(!settings.motionTilt()); break;
-                        case 3: settings.setMotionShake(!settings.motionShake()); break;
-                        default: settings.setHaptics(!settings.haptics()); break;
-                    }
-                    applyControlSettings();
-                    motion.stop();
-                    motion.start(settings.motionTilt(), settings.motionShake());
-                    showControlsMenu();
-                })
-                .setNegativeButton("Back", (dialog, which) -> onMenu())
+                .setNegativeButton("Back to the Game", null)
                 .show();
     }
 }

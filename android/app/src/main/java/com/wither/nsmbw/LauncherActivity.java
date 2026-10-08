@@ -117,11 +117,15 @@ public final class LauncherActivity extends Activity {
         });
         column.addView(skip);
         final TextView skipHelp = text("On: opening the app goes straight into the game. "
-                + "In the game, the ⋯ menu's Start Menu brings you back here.", 13);
+                + "In the game, the phone's Back gesture and Start Menu bring you back here.", 13);
         skipHelp.setTextColor(Color.rgb(170, 178, 186));
         skipHelp.setPadding(0, dp(4), 0, 0);
         column.addView(skipHelp);
         updateSkipButton();
+
+        final Button settingsButton = button("Settings");
+        settingsButton.setOnClickListener(v -> SettingsMenu.show(this));
+        column.addView(settingsButton);
 
         final Button devices = button("Tailscale & LAN Devices");
         devices.setOnClickListener(v -> DevicesDialog.show(this));

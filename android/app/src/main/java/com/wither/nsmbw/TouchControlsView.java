@@ -61,7 +61,6 @@ final class TouchControlsView extends View {
     private final Button[] buttons = {
         new Button(TWO, "2", 1.4f), new Button(ONE, "1", 1.4f), new Button(A, "A", 1.25f),
         new Button(SHAKE, "SHAKE", 1.25f), new Button(MINUS, "−", 1.3f), new Button(PLUS, "+", 1.3f),
-        new Button(MENU, "⋯", 1.3f),
     };
     private float padX, padY, padR;
     private final SparseIntArray pointerModes = new SparseIntArray();  // pointer id -> MODE_*
