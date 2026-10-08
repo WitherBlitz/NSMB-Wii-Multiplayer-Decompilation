@@ -50,6 +50,11 @@ network, phones included. Every device runs the game and only the players' input
 lockstep. If a player drops, the others get a message instead of a frozen game, and the host keeps
 the progress. See [LAN and Tailscale multiplayer](#lan-and-tailscale-multiplayer).
 
+**Tap the menus.**
+On the title screen, Select a File, Select Players and the LAN menus, just tap what you want
+(or click it with the mouse on Windows). The on-screen controller hides while those menus are up
+and comes back for the game.
+
 **Touch controls, tilt and shake.**
 An on-screen sideways Wii Remote (D-pad, 1, 2, A, Shake, + and -) with adjustable opacity and
 vibration. Turn the phone like a steering wheel to tilt, jolt it to shake. Each can be turned off.
@@ -124,9 +129,9 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest)
 page:
 
-- **Android:** `NSMBW-0.0.5-android-arm64.apk`. Open it on your phone and allow installing from that
+- **Android:** `NSMBW-0.0.6-android-arm64.apk`. Open it on your phone and allow installing from that
   app when Android asks. Updates install over it and keep your saves and game files.
-- **Windows:** `NSMBW-0.0.5-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
+- **Windows:** `NSMBW-0.0.6-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
   saves stay in the `UserData` folder next to it.
 
 > [!CAUTION]
@@ -244,7 +249,7 @@ Open an issue with your device, what you did, and (on Windows) the log from `Use
 `NSMBW.exe`.
 
 **Is it done?**
-No, this is 0.0.5. It boots and plays on the tested devices, but not every level has been checked,
+No, this is 0.0.6. It boots and plays on the tested devices, but not every level has been checked,
 and rendering, performance and LAN play are still being worked on.
 
 ## AI usage
