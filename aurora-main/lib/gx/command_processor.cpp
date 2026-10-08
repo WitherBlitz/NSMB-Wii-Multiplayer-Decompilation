@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -498,10 +499,45 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian);
 static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian);
 static bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
 
+// NSMBW: time spent decoding GX commands (and waiting for the renderer lock first), and draws
+// decoded, for the runtime's NSMBW_LOG_FPS breakdown.
+std::atomic<uint64_t> g_statProcessNanos{0}, g_statLockNanos{0}, g_statDraws{0};
+thread_local int t_statDepth = 0;  // only the outermost of nested process()/raw draws counts
+// Timed only while the runtime logs frame times (NSMBW_LOG_FPS): two clock reads per draw add up.
+// Read at first use: on Android the runtime sets the variable from a property after startup.
+static bool StatTiming() {
+  static const bool on = std::getenv("NSMBW_LOG_FPS") != nullptr;
+  return on;
+}
+struct ProcessTimer {
+  std::chrono::steady_clock::time_point start{};
+  ProcessTimer() {
+    if (StatTiming()) {
+      start = std::chrono::steady_clock::now();
+      ++t_statDepth;
+    }
+  }
+  ~ProcessTimer() {
+    if (StatTiming() && --t_statDepth == 0) {
+      g_statProcessNanos.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now() - start)
+                                       .count(),
+                                   std::memory_order_relaxed);
+    }
+  }
+};
+
 uint32_t process(const u8* data, u32 size, bool bigEndian) {
   ZoneScoped;
+  ProcessTimer timer;
   // Everything decoded here mutates renderer state (GX state, the recorded command lists and the mapped staging buffers), so take the renderer GPU mutex once for the whole drain rather than once per draw command.
+  const auto lockStart = StatTiming() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   std::lock_guard gpuLock(aurora::renderer_gpu_mutex());
+  if (StatTiming()) {
+    g_statLockNanos.fetch_add(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - lockStart).count(),
+        std::memory_order_relaxed);
+  }
   u32 pos = 0;
 
   while (pos < size) {
@@ -2143,6 +2179,8 @@ static bool admit_draw(GXPrimitive prim, GXVtxFmt fmt, u16 count, uint32_t verte
 bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
                      uint32_t vertexBytes) {
   ZoneScoped;
+  ProcessTimer timer;
+  g_statDraws.fetch_add(1, std::memory_order_relaxed);
   if (vertices == nullptr || vtxCount == 0 || vertexBytes == 0) {
     return false;
   }
@@ -2197,6 +2235,7 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
 
 static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian) {
   ZoneScoped;
+  g_statDraws.fetch_add(1, std::memory_order_relaxed);
   GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
   GXPrimitive prim = primitive_from_draw_cmd(cmd);
 
@@ -2533,6 +2572,18 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
 } // namespace aurora::gx::fifo
 
 // NSMBW: widen 16:9 perspective cameras to `aspect` (the screen's, when wider than 16:9; 0 = off).
+extern std::atomic<uint64_t> g_statCopies, g_statCopyCreates;
+extern "C" void AuroraTakeCopyStats(uint64_t* copies, uint64_t* creates) {
+  *copies = g_statCopies.exchange(0, std::memory_order_relaxed);
+  *creates = g_statCopyCreates.exchange(0, std::memory_order_relaxed);
+}
+
+extern "C" void AuroraTakeGxStats(uint64_t* processNanos, uint64_t* lockNanos, uint64_t* draws) {
+  *processNanos = aurora::gx::fifo::g_statProcessNanos.exchange(0, std::memory_order_relaxed);
+  *lockNanos = aurora::gx::fifo::g_statLockNanos.exchange(0, std::memory_order_relaxed);
+  *draws = aurora::gx::fifo::g_statDraws.exchange(0, std::memory_order_relaxed);
+}
+
 extern "C" void AuroraSetWidePerspectiveAspect(float aspect) {
   aurora::gx::fifo::g_widePerspectiveAspect.store(aspect, std::memory_order_relaxed);
 }

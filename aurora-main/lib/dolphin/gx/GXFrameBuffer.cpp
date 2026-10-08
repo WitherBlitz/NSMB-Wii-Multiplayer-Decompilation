@@ -1,3 +1,4 @@
+#include <atomic>
 #include "gx.hpp"
 #include "__gx.h"
 
@@ -158,7 +159,12 @@ aurora::Vec2<uint32_t> scale_copy_dst(u32 logicalWidth, u32 logicalHeight) {
   return {scaledWidth, scaledHeight};
 }
 
+} // namespace
+// NSMBW profiling (AuroraTakeGxStats): texture copies, and those that needed a new GPU texture.
+std::atomic<uint64_t> g_statCopies{0}, g_statCopyCreates{0};
+namespace {
 aurora::gfx::TextureHandle create_copy_texture(u32 width, u32 height, GXTexFmt texCopyFmt) {
+  g_statCopyCreates.fetch_add(1, std::memory_order_relaxed);
   if (aurora::gfx::tex_copy_conv::needs_conversion(texCopyFmt)) {
     return aurora::gfx::new_conv_texture(width, height, texCopyFmt, "Copy Conv Texture");
   }
@@ -173,16 +179,27 @@ struct CopyTexturePoolEntry {
   u32 scaledWidth = 0;
   u32 scaledHeight = 0;
   aurora::gfx::TextureHandle handle;
+  u32 lastUsedFrame = 0;
 };
 std::vector<CopyTexturePoolEntry> g_copyTexturePool;
-  // Keep only a few reusable copy targets per destination.
-constexpr size_t kCopyTexturePoolPerKey = 3;
+// Reusable copy targets per destination. NSMBW copies the EFB to the same destination many times a
+// frame in some courses (World 5's tower: 40 copies a frame), and each copy sampled earlier in the
+// frame, or still held by a frame in flight, needs a target of its own. With only 3 kept, 18 GPU
+// textures were created and destroyed every frame there (the slowdown). Targets unused for a few
+// seconds are released instead.
+constexpr size_t kCopyTexturePoolPerKey = 64;
+constexpr u32 kCopyTextureIdleFrames = 300;
 
 aurora::gfx::TextureHandle acquire_copy_texture(const aurora::gx::GXState::CopyTextureKey& key, u32 width, u32 height,
                                                 GXTexFmt texCopyFmt) {
   size_t sameKey = 0;
+  const u32 frame = aurora::gfx::current_frame();
   for (auto it = g_copyTexturePool.begin(); it != g_copyTexturePool.end();) {
     if (!(it->key == key)) {
+      if (frame - it->lastUsedFrame > kCopyTextureIdleFrames && it->handle.use_count() <= 1) {
+        it = g_copyTexturePool.erase(it);  // idle for seconds: give the memory back
+        continue;
+      }
       ++it;
       continue;
     }
@@ -193,6 +210,7 @@ aurora::gfx::TextureHandle acquire_copy_texture(const aurora::gx::GXState::CopyT
     }
     ++sameKey;
     if (it->scaledWidth == width && it->scaledHeight == height && it->handle.use_count() == 1) {
+      it->lastUsedFrame = frame;
       return it->handle;
     }
     ++it;
@@ -200,7 +218,7 @@ aurora::gfx::TextureHandle acquire_copy_texture(const aurora::gx::GXState::CopyT
 
   auto handle = create_copy_texture(width, height, texCopyFmt);
   if (sameKey < kCopyTexturePoolPerKey) {
-    g_copyTexturePool.push_back({key, width, height, handle});
+    g_copyTexturePool.push_back({key, width, height, handle, frame});
   }
   return handle;
 }
@@ -452,6 +470,7 @@ void GXCopyDisp(void* dest, GXBool clear) {
 }
 
 void GXCopyTex(void* dest, GXBool clear) {
+  g_statCopies.fetch_add(1, std::memory_order_relaxed);
   // Texture copies must see all earlier draws and state changes.
   if (aurora::gx::fifo::get_buffer_size() != 0) {
     aurora::gx::fifo::drain();
@@ -459,8 +478,15 @@ void GXCopyTex(void* dest, GXBool clear) {
   const auto sourceRect = map_texture_copy_source(g_gxState.texCopySrc, g_gxState.texCopySrcRenderSpace);
   const auto rect = sourceRect.clearRect;
   // Keep guest dimensions for cache identity while preserving scaled GPU detail.
-  const auto logicalDstWidth = std::max<u32>(g_gxState.texCopyDstWidth, 1);
-  const auto logicalDstHeight = std::max<u32>(g_gxState.texCopyDstHeight, 1);
+  // NSMBW: a destination wider or taller than what the copy writes is a patch into a bigger texture
+  // (dNitro's animated tiles copy 32x32 frames into the 1024x1024 tile atlas, the destination size
+  // giving the atlas stride). The copy only produces the source's extent, so size the texture to
+  // that: a 1024x1024 target per 32x32 patch (2752x1617 at a high render scale) made every such
+  // copy allocate tens of megabytes.
+  const u32 copiedWidth = static_cast<u32>(std::max(g_gxState.texCopySrc.width, 1)) >> (g_gxState.texCopyHalfScale ? 1 : 0);
+  const u32 copiedHeight = static_cast<u32>(std::max(g_gxState.texCopySrc.height, 1)) >> (g_gxState.texCopyHalfScale ? 1 : 0);
+  const auto logicalDstWidth = std::max<u32>(std::min<u32>(g_gxState.texCopyDstWidth, std::max<u32>(copiedWidth, 1)), 1);
+  const auto logicalDstHeight = std::max<u32>(std::min<u32>(g_gxState.texCopyDstHeight, std::max<u32>(copiedHeight, 1)), 1);
   const auto [scaledDstWidth, scaledDstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
   const auto texCopyFmt = g_gxState.texCopyFmt;
   const bool sourceHasAlpha = aurora::gx::render_target_has_alpha(g_gxState.pixelFmt);
@@ -481,7 +507,14 @@ void GXCopyTex(void* dest, GXBool clear) {
       ++cacheIt;
     }
   }
+  // NSMBW_LOG_COPIES=<frame>: log every texture copy of that frame and the next (profiling).
+  static const long logFrame = [] {
+    const char* value = std::getenv("NSMBW_LOG_COPIES");
+    return value != nullptr ? std::atol(value) : -1L;
+  }();
+  const uint64_t createsBefore = g_statCopyCreates.load(std::memory_order_relaxed);
   auto it = g_gxState.copyTextureCache.find(key);
+  const bool cacheMiss = it == g_gxState.copyTextureCache.end();
   if (it == g_gxState.copyTextureCache.end()) {
     auto handle = acquire_copy_texture(key, scaledDstWidth, scaledDstHeight, texCopyFmt);
     it = g_gxState.copyTextureCache.emplace(key, aurora::gx::GXState::CopyTextureRef{.handle = handle, .revision = 0}).first;
@@ -500,6 +533,22 @@ void GXCopyTex(void* dest, GXBool clear) {
         .revision = revision,
         .lastProducedFrame = lastProducedFrame,
     };
+  }
+  if (logFrame >= 0 && (currentFrame == static_cast<u32>(logFrame) || currentFrame == static_cast<u32>(logFrame) + 1)) {
+    size_t pooled = 0, free = 0;
+    for (const auto& entry : g_copyTexturePool) {
+      if (entry.key == key) {
+        ++pooled;
+        free += entry.handle.use_count() == 1;
+      }
+    }
+    std::fprintf(stderr,
+                 "[copy] frame %u dest %p %ux%u fmt %d -> %ux%u miss %d sampled %d resized %d created %d pool %zu "
+                 "free %zu cache %zu\n",
+                 currentFrame, dest, logicalDstWidth, logicalDstHeight, static_cast<int>(texCopyFmt), scaledDstWidth,
+                 scaledDstHeight, cacheMiss, sampledThisFrame, scaledSizeChanged,
+                 static_cast<int>(g_statCopyCreates.load(std::memory_order_relaxed) - createsBefore), pooled, free,
+                 g_gxState.copyTextureCache.size());
   }
 
   const bool alphaUpdate = g_gxState.alphaUpdate && aurora::gx::render_target_has_alpha(g_gxState.pixelFmt);

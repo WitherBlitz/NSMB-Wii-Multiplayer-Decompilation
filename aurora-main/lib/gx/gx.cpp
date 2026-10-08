@@ -1178,7 +1178,8 @@ void evict_copy_texture(const void* dest) noexcept {
       }
     }
   }
-  prune_copy_texture_pool(dest);
+  // NSMBW: the pooled GPU textures stay: a destination evicted and copied again every frame (the
+  // animated tiles) reuses them instead of creating new ones; the pool releases idle ones itself.
   if (changed) {
     mark_copy_texture_cache_changed();
   }

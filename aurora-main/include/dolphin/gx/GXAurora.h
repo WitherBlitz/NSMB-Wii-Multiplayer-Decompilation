@@ -99,6 +99,10 @@ void AuroraSetViewportPolicy(AuroraViewportPolicy policy);
 // NSMBW: widen cameras (perspective, and screen-sized orthographic) set up for 16:9 to this aspect
 // (0 = off), for a screen the picture fills that is wider than 16:9.
 void AuroraSetWidePerspectiveAspect(float aspect);
+// NSMBW: GX decoding time, renderer-lock wait and draw count since the last call (profiling).
+void AuroraTakeGxStats(uint64_t* processNanos, uint64_t* lockNanos, uint64_t* draws);
+// NSMBW: GXCopyTex calls and the new GPU textures they needed, since the last call (profiling).
+void AuroraTakeCopyStats(uint64_t* copies, uint64_t* creates);
 
 /**
  * Retrieves the current content framebuffer size.

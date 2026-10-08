@@ -12,7 +12,9 @@
 #include "fiber_manager.h"
 #include "platform/host_platform.h"
 #include "runtime_log.h"
+#include "guest_profiler.h"
 
+#include <dolphin/gx/GXAurora.h>
 #include <dolphin/vi.h>
 
 #include <algorithm>
@@ -689,10 +691,30 @@ void PaceToRetraceBoundary(Clock::time_point deadline) {
 // Single owner of the Aurora frame presentation sequence: seals the active frame, optionally paces the
 // producer to the VI retrace boundary, and pre-warms the next frame. Paced from GXCopyDisp; unpaced for
 // the retrace-context black/boot present path in AdvanceRetrace.
+// NSMBW_LOG_FPS (debug.nsmbw.logfps on Android): every two seconds, the frames presented and where
+// each frame's time went: the game (guest code and GX command building), aurora_end_frame (encoding,
+// submission, and waiting on the GPU when it falls behind) and pacing to the retrace. A game share near
+// the frame budget is CPU-bound; a large end_frame share is GPU-bound.
+struct FrameTimes {
+    Clock::time_point windowStart{};
+    Clock::time_point lastPresentEnd{};
+    double gameMs = 0, endFrameMs = 0, paceMs = 0, worstMs = 0;
+    int frames = 0;
+};
+
+static bool LogFpsEnabled() {
+    static const bool on = std::getenv("NSMBW_LOG_FPS") != nullptr;
+    return on;
+}
+
 void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
     if (s_presentSequenceActive.exchange(true, std::memory_order_acq_rel)) {
         return;
     }
+    GuestProfiler::OnFramePresented();
+    static FrameTimes times;
+    const Clock::time_point presentStart = Clock::now();
+    const auto ms = [](Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
     struct SequenceGuard {
         ~SequenceGuard() { s_presentSequenceActive.store(false, std::memory_order_release); }
     } sequenceGuard;
@@ -769,11 +791,44 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
         aurora_set_present_schedule(0, 0);
     }
 
+    const Clock::time_point endFrameStart = Clock::now();
     aurora_end_frame();
+    const Clock::time_point paceStart = Clock::now();
     if (paceThisFrame) {
         PaceToRetraceBoundary(paceDeadline);
         std::lock_guard<std::mutex> lock(g_viMutex);
         s_lastPacedRetraceCount = g_vi.retraceCount;
+    }
+    if (LogFpsEnabled() && presentedXfb) {
+        const Clock::time_point now = Clock::now();
+        if (times.lastPresentEnd != Clock::time_point{}) {
+            const double game = ms(presentStart - times.lastPresentEnd) + ms(endFrameStart - presentStart);
+            const double frame = ms(now - times.lastPresentEnd);
+            times.gameMs += game;
+            times.endFrameMs += ms(paceStart - endFrameStart);
+            times.paceMs += ms(now - paceStart);
+            times.worstMs = std::max(times.worstMs, frame);
+            ++times.frames;
+        } else {
+            times.windowStart = now;
+        }
+        times.lastPresentEnd = now;
+        const double window = ms(now - times.windowStart);
+        if (window >= 2000.0 && times.frames > 0) {
+            const double n = times.frames;
+            uint64_t gxNanos = 0, lockNanos = 0, draws = 0;
+            AuroraTakeGxStats(&gxNanos, &lockNanos, &draws);
+            uint64_t copies = 0, creates = 0;
+            AuroraTakeCopyStats(&copies, &creates);
+            RT_LOGF(RT_TAG_VI,
+                    "fps %.1f: game %.2f ms (gx %.2f ms, lock wait %.2f ms, %.0f draws, %.1f copies, %.1f new copy "
+                    "textures), end_frame %.2f ms, pace %.2f ms, worst frame %.1f ms\n",
+                    n * 1000.0 / window, times.gameMs / n, gxNanos / 1e6 / n, lockNanos / 1e6 / n, draws / n,
+                    copies / n, creates / n, times.endFrameMs / n, times.paceMs / n, times.worstMs);
+            times = FrameTimes{};
+            times.windowStart = now;
+            times.lastPresentEnd = now;
+        }
     }
     settings_overlay::AdvancePresentedFrame();
     g_auroraFrameActive.store(false, std::memory_order_release);

@@ -151,9 +151,38 @@ extern "C" void GX__CopyTex_8016fd74(uint32_t da, uint32_t c) {
     // later. RISK: copies above the probe threshold, or on the offscreen list, are not
     // auto-downloaded, so guest reads see stale RAM; call aurora_flush_efb_copies_to_ram if a
     // copy needs reading back.
+    // NSMBW_LOG_COPIES: each distinct texture copy (destination size, format, source rectangle) once,
+    // with the guest code that asked for it (profiling).
+    if (static const bool logCopies = std::getenv("NSMBW_LOG_COPIES") != nullptr; logCopies) {
+        static std::vector<uint64_t> seen;
+        const uint64_t key = (uint64_t(g_texCopyState.dstWidth) << 48) | (uint64_t(g_texCopyState.dstHeight) << 32) |
+                             (uint64_t(rawSrcWidth) << 16) | rawSrcHeight;
+        if (std::find(seen.begin(), seen.end(), key) == seen.end() && seen.size() < 64) {
+            seen.push_back(key);
+            uint32_t lr = 0, ra[4] = {};
+            if (const CpuContext* cpu = TryGetCpuContext()) {
+                lr = cpu->lr;
+                uint32_t sp = cpu->gpr[1];
+                for (int d = 0; d < 4 && sp != 0; ++d) {
+                    uint32_t back = 0;
+                    if (!Memory::TryRead32(sp, back) || back == 0) break;
+                    Memory::TryRead32(back + 4, ra[d]);
+                    sp = back;
+                }
+            }
+            std::fprintf(stderr, "[copytex] dst %ux%u fmt %u src %u,%u %ux%u dest %08X lr %08X %08X %08X %08X %08X\n",
+                         g_texCopyState.dstWidth, g_texCopyState.dstHeight, g_texCopyState.dstFormat, rawSrcLeft,
+                         rawSrcTop, rawSrcWidth, rawSrcHeight, da, lr, ra[0], ra[1], ra[2], ra[3]);
+        }
+    }
     GXCopyTex(GuestToHostPtr(da), (GXBool)c);
+    // The extent the copy writes: a destination bigger than the source is a patch into a larger
+    // texture (aurora sizes its copy the same way), not a claim on that whole texture's memory.
+    const uint32_t copiedWidth = std::max<uint32_t>(rawSrcWidth >> (g_texCopyState.dstMipmap ? 1 : 0), 1);
+    const uint32_t copiedHeight = std::max<uint32_t>(rawSrcHeight >> (g_texCopyState.dstMipmap ? 1 : 0), 1);
     RememberEfbCopyDestination(
-        da, GXGetTexBufferSize(g_texCopyState.dstWidth, g_texCopyState.dstHeight,
+        da, GXGetTexBufferSize(std::min<uint32_t>(g_texCopyState.dstWidth, copiedWidth),
+                               std::min<uint32_t>(g_texCopyState.dstHeight, copiedHeight),
                                g_texCopyState.dstFormat, GX_FALSE, 0));
     GXSetTexCopySrc(rawSrcLeft, rawSrcTop, rawSrcWidth, rawSrcHeight);
 }

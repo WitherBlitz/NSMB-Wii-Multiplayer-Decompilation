@@ -1135,6 +1135,51 @@ void DumpProfiles() {
     last = profiles;
 }
 
+// NSMBW_WARP=<world>-<course> (debug.nsmbw.warp on Android): entering any course from the world map
+// enters that one instead (testing a level without a save that reaches it). Courses 1-9 are the
+// numbered ones; others are STAGE_e numbers: 20 ghost house, 21 tower, 23 castle, 32-34 the map
+// enemies' courses (5-32: World 5's giant Piranha Plant), 37 airship. Works by
+// rewriting dInfo_c::m_startGameInfo (0x80315B90; world/course shown at +0xC/+0xD and loaded at
+// +0xE/+0xF, all from 0)
+// while the map fades out to the course-in scene, which reads it.
+void Warp() {
+    static int world = -1, course = -1;
+    static bool parsed = false;
+    if (!parsed) {
+        parsed = true;
+        if (const char* value = std::getenv("NSMBW_WARP"); value != nullptr && value[0] != 0) {
+            int w = 0, c = 0;
+            if (std::sscanf(value, "%d-%d", &w, &c) == 2 && w >= 1 && w <= 9 && c >= 1 && c <= 42) {
+                world = w - 1;
+                course = c <= 9 ? c - 1 : c;  // 1-9 as shown, the rest as STAGE_e numbers
+            }
+        }
+    }
+    if (world < 0) {
+        return;
+    }
+    uint32_t sceneWord = 0;
+    if (!Memory::TryRead32(0x80428730u, sceneWord)) {
+        return;
+    }
+    const uint16_t next = static_cast<uint16_t>(sceneWord >> 16), now = static_cast<uint16_t>(sceneWord & 0xFFFFu);
+    static bool done = false;
+    if (next == 0x007 && now == 0x003) {
+        if (!done) {
+            Memory::Write8(0x80315B90u + 0xC, static_cast<uint8_t>(world));
+            Memory::Write8(0x80315B90u + 0xD, static_cast<uint8_t>(course));
+            Memory::Write8(0x80315B90u + 0xE, static_cast<uint8_t>(world));  // the course loaded
+            Memory::Write8(0x80315B90u + 0xF, static_cast<uint8_t>(course));
+            Memory::Write8(0x80315B90u + 0x5, 0);  // entrance
+            Memory::Write8(0x80315B90u + 0x6, 0);  // area
+            RT_LOGF(RT_TAG_RUNTIME, "warp: course %d-%d\n", world + 1, course + 1);
+            done = true;
+        }
+    } else {
+        done = false;
+    }
+}
+
 // NSMBW_DUMP_LAYOUT=<arc>;<arc>...: log every pane's position in those layouts once (finding
 // where the game's own buttons are).
 void DumpLayouts() {
@@ -1200,6 +1245,7 @@ void ScriptedTaps() {
 
 void Draw() {
     DumpProfiles();
+    Warp();
     if (std::getenv("NSMBW_DUMP_STATES") != nullptr) {
         static std::string lastStates;
         std::string states = GameMenus::DumpStates();

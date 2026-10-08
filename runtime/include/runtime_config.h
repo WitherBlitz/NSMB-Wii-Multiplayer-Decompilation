@@ -612,6 +612,15 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
 }
 
 inline RuntimeUserConfig ParseConfig(std::istream& input, std::string sourceName = "Config.toml") {
+    // A UTF-8 byte order mark (some editors add one) is not TOML: skip it rather than lose every setting.
+    if (input.peek() == 0xEF) {
+        char bom[3] = {};
+        input.read(bom, 3);
+        if (static_cast<unsigned char>(bom[1]) != 0xBB || static_cast<unsigned char>(bom[2]) != 0xBF) {
+            input.clear();
+            input.seekg(0);
+        }
+    }
     try {
         return ParseConfigDocument(toml::parse(input, std::move(sourceName)));
     } catch (const std::exception& exception) {
