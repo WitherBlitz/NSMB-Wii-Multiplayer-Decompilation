@@ -42,8 +42,9 @@ The whole game is compiled to ARM64 code ahead of time. It runs at a full 60 fps
 Snapdragon 6 Gen 1 phone.
 
 **LAN and Tailscale multiplayer across phones and PCs.**
-On the save file screen, pick **LAN** or **Couch**. LAN lets you **Create Room** (choose how many
-are playing, then start the room when everyone is in) or **Join** a room from a list that finds
+On the save file screen, a **Couch / LAN** button sits at the top right (Couch by default). Switch it
+to **LAN** to **Create Room** (choose how many are playing, then start the room when everyone is
+in) or **Join** a room from a list that finds
 games by itself: on your Wi-Fi, and over the internet on your [Tailscale](https://tailscale.com)
 network, phones included. Every device runs the game and only the players' inputs travel, in
 lockstep. If a player drops, the others get a message instead of a frozen game, and the host keeps
@@ -156,14 +157,15 @@ A game controller also works on Windows as a sideways Wii Remote.
 ## LAN and Tailscale multiplayer
 
 <p align="center">
-  <img src="docs/screenshots/windows-lan-or-couch.png" alt="The LAN or Couch? window on the Select a File screen, on Windows" width="640">
-  <br><sub>"LAN or Couch?" on the save file screen (Windows), drawn in the game's own style.</sub>
+  <img src="docs/screenshots/windows-lan-couch-toggle.png" alt="The Couch / LAN button at the top right of the Select a File screen, on Windows" width="640">
+  <br><sub>The Couch / LAN button on the save file screen (Windows), in the game's own style. Press Up from any file to reach it.</sub>
 </p>
 
 Up to 4 players, on any mix of phones and PCs. Every player needs their own game files.
 
-1. One player picks **LAN** on the save file screen, then **Create Room** and how many are playing.
-2. The others pick **LAN**, then **Join**, and choose the room from the list.
+1. One player presses Up on the save file screen to reach the **Couch** button at the top right,
+   switches it to **LAN**, then picks **Create Room** and how many are playing.
+2. The others switch it to **LAN** too, pick **Join**, and choose the room from the list.
 3. The host starts the room. Every device restarts into the session with the host's save, and the
    game goes to the player select by itself.
 
