@@ -17,7 +17,9 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -31,13 +33,18 @@ using GameLayout::Utf16;
 using Phase = NetplayLobby::Phase;
 
 // WPAD_BUTTON_* bits.
-constexpr uint32_t kLeft = 0x0001, kRight = 0x0002, kDown = 0x0004, kUp = 0x0008, kTwo = 0x0100, kOne = 0x0200,
-                   kB = 0x0400, kA = 0x0800;
+constexpr uint32_t kLeft = 0x0001, kRight = 0x0002, kDown = 0x0004, kUp = 0x0008, kPlus = 0x0010, kTwo = 0x0100,
+                   kOne = 0x0200, kB = 0x0400, kA = 0x0800, kMinus = 0x1000;
+// The same D-pad by screen direction, for a remote held sideways (D-pad under the left thumb).
+constexpr uint32_t kScreenLeft = kUp, kScreenRight = kDown, kScreenUp = kRight, kScreenDown = kLeft;
 
 // None is Couch, the game's own screens. Every other screen is part of LAN play.
 enum class Screen { None, Lan, ChooseFile, Count, Rooms, Room, Message };
 
+constexpr uint16_t kSceneBoot = 0x000;       // the strap screen ("Hold the Wii Remote sideways")
+constexpr uint16_t kSceneStage = 0x005;      // a course, or the title screen's
 constexpr uint16_t kSceneGameSetup = 0x00A;  // the file select and "Select Players"
+constexpr uint16_t kProfileOpeningTitle = 0x2BB;  // EVENT_OPENING_TITLE: only on the title screen
 
 enum Event : uint32_t {
     kEvLeft = 1, kEvRight = 2, kEvUp = 4, kEvDown = 8, kEvConfirm = 16, kEvBack = 32,
@@ -63,6 +70,103 @@ struct Ui {
 };
 
 Ui g_ui;
+
+// ---------------------------------------------------------------- touch and mouse
+// These windows' buttons as last drawn, in layout units: a tap on one picks it as the remote would.
+struct Hit {
+    float x, y, w, h;
+    int cursor;  // -1: leave the cursor as it is
+    bool back;
+};
+std::vector<Hit> g_hits;
+
+void AddHit(float x, float y, float w, float h, int cursor, bool back = false) {
+    g_hits.push_back(Hit{x, y, w, h, cursor, back});
+}
+
+std::atomic<uint64_t> g_tap{0};  // a tap for the next frame: bit 63, then x and y as 16-bit fractions
+std::atomic<bool> g_tapScreen{false};
+
+// A tap on the game's own screens is played back as remote presses on channel 1: one press, or
+// D-pad steps toward a cursor position (checked against the game's cursor before each) and then
+// 2 to pick it.
+enum class NavKind { None, Press, File, Players };
+struct Nav {
+    NavKind kind = NavKind::None;
+    int target = 0;           // the cursor position, or for Press the buttons
+    uint32_t button = 0;      // what is pressed during this step
+    int reads = 0;
+    int steps = 0;
+    bool confirming = false;
+};
+Nav g_nav;
+
+void StartNav(NavKind kind, int target) {
+    static const char* const kKinds[] = {"none", "press", "file select", "select players"};
+    RT_LOGF(RT_TAG_RUNTIME, "tap: %s 0x%X\n", kKinds[static_cast<int>(kind)], target);
+    g_nav = Nav{};
+    g_nav.kind = kind;
+    g_nav.target = target;
+}
+
+uint32_t NextNavButton(Nav& n) {
+    if (n.kind == NavKind::Press) {
+        if (n.steps++ == 0) {
+            return static_cast<uint32_t>(n.target);
+        }
+        n.kind = NavKind::None;
+        return 0;
+    }
+    if (n.confirming || ++n.steps > 16) {
+        n.kind = NavKind::None;
+        return 0;
+    }
+    int cursor = 0;
+    int row = 0, col = 0, targetRow = 0, targetCol = 0;
+    if (n.kind == NavKind::File) {
+        if (!GameMenus::FileSelectWaiting()) {
+            return 0;  // still moving: wait
+        }
+        // 0-2 the files in a row, 3 and 4 Free-for-All and Coin Battle below them.
+        cursor = GameMenus::FileSelectRawCursor();
+        row = cursor <= 2 ? 0 : 1;
+        col = cursor <= 2 ? cursor : cursor - 3;
+        targetRow = n.target <= 2 ? 0 : 1;
+        targetCol = n.target <= 2 ? n.target : n.target - 3;
+    } else {
+        if (!GameMenus::SelectPlayersSettled()) {
+            return 0;
+        }
+        // 0 "1 Player" on top, 1-3 "2-4 Players" in a row below it.
+        cursor = GameMenus::SelectPlayersCursor();
+        row = cursor == 0 ? 0 : 1;
+        col = cursor == 0 ? 0 : cursor - 1;
+        targetRow = n.target == 0 ? 0 : 1;
+        targetCol = n.target == 0 ? 0 : n.target - 1;
+    }
+    RT_LOGF(RT_TAG_RUNTIME, "tap: cursor %d, going to %d\n", cursor, n.target);
+    if (cursor == n.target) {
+        n.confirming = true;
+        return kTwo;
+    }
+    if (row != targetRow) {
+        return targetRow > row ? kScreenDown : kScreenUp;
+    }
+    return targetCol > col ? kScreenRight : kScreenLeft;
+}
+
+// Once per read of channel 1: the buttons the current tap holds now (4 reads down, 4 up per step).
+uint32_t NavButtons() {
+    Nav& n = g_nav;
+    if (n.kind == NavKind::None) {
+        return 0;
+    }
+    const int phase = n.reads++ % 8;
+    if (phase == 0) {
+        n.button = NextNavButton(n);
+    }
+    return phase < 4 ? n.button : 0;
+}
 
 struct Assets {
     bool tried = false;
@@ -230,6 +334,8 @@ void ButtonPair(const Canvas& c, const std::string& left, const std::string& rig
     const float y = -height / 2 + 43.0f;
     Button(c, left, -126, y, 232, cursor == 0, leftEnabled, g_ui.frame);
     Button(c, right, 126, y, 232, cursor == 1, rightEnabled, g_ui.frame);
+    AddHit(-126, y, 240, 60, 0);
+    AddHit(126, y, 240, 60, 1);
 }
 
 std::string PlayerLine(uint8_t slot, const std::string& name, bool you) {
@@ -254,6 +360,8 @@ void DrawLan(const Canvas& c) {
     Text(c, "Join a room on another device,", 0, 40);
     Text(c, "or create one here.", 0, 5);
     ButtonPair(c, "Join", "Create Room", 322, g_ui.cursor);
+    Text(c, "(1) Back", 240, 130, 22, 2);  // back to Couch; tappable
+    AddHit(195, 130, 140, 44, -1, true);
 }
 
 // A hint over one of the game's own screens, in the empty right half of its title bar.
@@ -299,8 +407,10 @@ void DrawRooms(const Canvas& c, const NetplayLobby::Snapshot& lobby) {
             label += "  (Tailscale)";
         }
         Button(c, label, 0, y, 480, g_ui.cursor == first + i, !room.full, g_ui.frame);
+        AddHit(0, y, 490, 58, first + i);
     }
     Text(c, "(1) Back", 225, -height / 2 + 22, 22, 2);
+    AddHit(175, -height / 2 + 22, 140, 44, -1, true);
 }
 
 void DrawRoom(const Canvas& c, const NetplayLobby::Snapshot& lobby) {
@@ -339,6 +449,7 @@ void DrawRoom(const Canvas& c, const NetplayLobby::Snapshot& lobby) {
         ButtonPair(c, "Start", "Cancel", height, g_ui.cursor, lobby.members.size() >= 2, true);
     } else {
         Button(c, "Leave", 0, -height / 2 + 43.0f, 232, true, true, g_ui.frame);
+        AddHit(0, -height / 2 + 43.0f, 240, 60, 0);
     }
 }
 
@@ -358,6 +469,7 @@ void DrawMessage(const Canvas& c) {
         Text(c, second, 0, 15);
     }
     Button(c, "OK", 0, -150 + 43.0f, 232, true, true, g_ui.frame);
+    AddHit(0, -150 + 43.0f, 240, 60, 0);
 }
 
 std::string SlotName(int slot) {
@@ -496,7 +608,108 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
     }
 }
 
+// The Couch / LAN button pressed (by the remote or a tap).
+void PressToggle() {
+    if (g_ui.screen == Screen::None) {
+        g_ui.toggleFocus = false;
+        Show(Screen::Lan);  // Couch -> LAN: Join or Create Room
+    } else {
+        NetplayLobby::Stop();
+        Show(Screen::None);  // LAN (picking the room's save) -> Couch
+        g_ui.heldFromMenu = g_ui.prevHold;
+    }
+}
+
+// A tap at (lx, ly) in layout units (y up, the game's 4:3 layout space centred on the screen). The
+// game's own buttons are where its layouts (fileSelectBase, fileSelectPlayer) put them.
+// `gx` is x in the game's own layout units, which differ from these menus' in Fill (View::gameScaleX).
+void TapAt(float lx, float ly, float gx, uint16_t scene, bool title) {
+    const auto in = [&](float cx, float cy, float w, float h) {
+        return std::fabs(lx - cx) <= w / 2 && std::fabs(ly - cy) <= h / 2;
+    };
+    const auto inGame = [&](float cx, float cy, float w, float h) {
+        return std::fabs(gx - cx) <= w / 2 && std::fabs(ly - cy) <= h / 2;
+    };
+    if (Modal()) {
+        for (const Hit& hit : g_hits) {
+            if (in(hit.x, hit.y, hit.w, hit.h)) {
+                if (hit.back) {
+                    g_ui.events |= kEvBack;
+                } else {
+                    if (hit.cursor >= 0) {
+                        g_ui.cursor = hit.cursor;
+                    }
+                    g_ui.events |= kEvConfirm;
+                }
+                return;
+            }
+        }
+        return;
+    }
+    if (g_ui.toggleShown && in(kToggleX, kToggleY, kToggleW + 16, 66)) {
+        PressToggle();
+        return;
+    }
+    // Anywhere else is the game's: the cursor leaves the toggle so the game takes the presses.
+    g_ui.toggleFocus = false;
+    if (g_nav.kind != NavKind::None) {
+        return;  // still playing back the last tap
+    }
+    if (scene == kSceneBoot || title) {
+        StartNav(NavKind::Press, static_cast<int>(kTwo | kA));  // the strap screen, "Press 2 to Start"
+        return;
+    }
+    if (scene != kSceneGameSetup) {
+        return;
+    }
+    if (GameMenus::FileSelectWaiting()) {
+        for (int file = 0; file < 3; ++file) {
+            if (inGame(-190.0f + 190.0f * file, 45, 184, 196)) {
+                StartNav(NavKind::File, file);
+                return;
+            }
+        }
+        if (inGame(-143, -143, 259, 92)) {
+            StartNav(NavKind::File, 3);  // Free-for-All
+        } else if (inGame(143, -143, 259, 92)) {
+            StartNav(NavKind::File, 4);  // Coin Battle
+        } else if (inGame(-265, -62, 190, 46)) {
+            StartNav(NavKind::Press, static_cast<int>(kMinus));  // Erase
+        } else if (inGame(265, -62, 190, 46)) {
+            StartNav(NavKind::Press, static_cast<int>(kPlus));  // Copy
+        }
+        return;
+    }
+    if (GameMenus::SelectPlayersState() == GameMenus::SelectPlayers::Choosing) {
+        // Measured on screen: "1" spans the width above "2", "3" and "4".
+        if (inGame(0, 40, 410, 122)) {
+            StartNav(NavKind::Players, 0);
+            return;
+        }
+        for (int count = 2; count <= 4; ++count) {
+            if (inGame(-120.0f + 120.0f * (count - 2), -81, 112, 104)) {
+                StartNav(NavKind::Players, count - 1);
+                return;
+            }
+        }
+        // "Back (1)" sits at the bottom right, nearer the edge on a wide screen.
+        if (inGame(320, -183, 260, 70)) {
+            StartNav(NavKind::Press, static_cast<int>(kOne));
+        }
+    }
+}
+
 } // namespace
+
+void Tap(float x, float y) {
+    const uint64_t fx = static_cast<uint64_t>(std::clamp(x, 0.0f, 1.0f) * 65535.0f);
+    const uint64_t fy = static_cast<uint64_t>(std::clamp(y, 0.0f, 1.0f) * 65535.0f);
+    g_tap.store((1ull << 63) | (fx << 16) | fy, std::memory_order_release);
+}
+
+bool TapScreenUp() {
+    return g_tapScreen.load(std::memory_order_acquire);
+}
 
 void OnSessionStall() {
     // At most ~30 presents a second: enough for the banner, cheap while nothing moves.
@@ -560,9 +773,101 @@ bool LobbyTest() {
     return true;
 }
 
+// NSMBW_DUMP_PROFILES=1: log the object profiles whenever the set changes (finding screens).
+void DumpProfiles() {
+    static const bool on = [] {
+        const char* value = std::getenv("NSMBW_DUMP_PROFILES");
+        return value != nullptr && value[0] == '1';
+    }();
+    static int frame = 0;
+    static std::vector<uint16_t> last;
+    if (!on || ++frame % 30 != 0) {
+        return;
+    }
+    const auto profiles = GameMenus::Profiles();
+    if (profiles == last) {
+        return;
+    }
+    std::string text;
+    for (const uint16_t p : profiles) {
+        char hex[8];
+        std::snprintf(hex, sizeof(hex), "%03X ", p);
+        text += hex;
+    }
+    RT_LOGF(RT_TAG_RUNTIME, "profiles (scene %03X, %zu): %s\n", GameMenus::CurrentScene(), profiles.size(), text.c_str());
+    last = profiles;
+}
+
+// NSMBW_DUMP_LAYOUT=<arc>;<arc>...: log every pane's position in those layouts once (finding
+// where the game's own buttons are).
+void DumpLayouts() {
+    static bool done = false;
+    const char* value = std::getenv("NSMBW_DUMP_LAYOUT");
+    if (done || value == nullptr) {
+        return;
+    }
+    done = true;
+    std::string all = value;
+    for (size_t pos = 0; pos < all.size();) {
+        const size_t end = std::min(all.find(';', pos), all.size());
+        const std::string arc = all.substr(pos, end - pos);
+        pos = end + 1;
+        GameLayout::Layout layout;
+        if (!layout.Load(arc)) {
+            RT_LOGF(RT_TAG_RUNTIME, "layout dump: can't load %s\n", arc.c_str());
+            continue;
+        }
+        for (const auto& name : layout.PaneNames()) {
+            float x = 0, y = 0, w = 0, h = 0;
+            if (layout.PaneWorldRect(name, x, y, w, h)) {
+                RT_LOGF(RT_TAG_RUNTIME, "layout %s %s: x %.0f y %.0f w %.0f h %.0f\n", arc.c_str(), name.c_str(), x, y, w, h);
+            }
+        }
+    }
+}
+
+// NSMBW_TAP_SCRIPT="<ms>:<x>:<y>,..." (Android: debug.nsmbw.tapscript): taps at fractions of the
+// window, <ms> after the first frame, through the same path as real ones (testing without a hand).
+void ScriptedTaps() {
+    struct ScriptTap { long long ms; float x, y; };
+    static std::vector<ScriptTap> taps = [] {
+        std::vector<ScriptTap> list;
+        const char* value = std::getenv("NSMBW_TAP_SCRIPT");
+        if (value == nullptr) {
+            return list;
+        }
+        long long ms = 0;
+        float x = 0, y = 0;
+        for (const char* p = value; *p != '\0';) {
+            if (std::sscanf(p, "%lld:%f:%f", &ms, &x, &y) == 3) {
+                list.push_back({ms, x, y});
+            }
+            const char* comma = std::strchr(p, ',');
+            if (comma == nullptr) {
+                break;
+            }
+            p = comma + 1;
+        }
+        return list;
+    }();
+    static const auto start = std::chrono::steady_clock::now();
+    static size_t next = 0;
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+    while (next < taps.size() && taps[next].ms <= elapsed) {
+        RT_LOGF(RT_TAG_RUNTIME, "tap script: %.2f, %.2f\n", taps[next].x, taps[next].y);
+        Tap(taps[next].x, taps[next].y);
+        ++next;
+    }
+}
+
 void Draw() {
+    DumpProfiles();
+    DumpLayouts();
+    ScriptedTaps();
     ImDrawList* list = ImGui::GetBackgroundDrawList();
     if (NetplaySession::Active()) {
+        g_tapScreen.store(false, std::memory_order_release);
         DrawSession(list);
         return;
     }
@@ -593,14 +898,7 @@ void Draw() {
             g_ui.toggleFocus = false;
             g_ui.heldFromMenu = g_ui.prevHold;
         } else if (ev & kEvConfirm) {
-            if (g_ui.screen == Screen::None) {
-                g_ui.toggleFocus = false;
-                Show(Screen::Lan);  // Couch -> LAN: Join or Create Room
-            } else {
-                NetplayLobby::Stop();
-                Show(Screen::None);  // LAN (picking the room's save) -> Couch
-                g_ui.heldFromMenu = g_ui.prevHold;
-            }
+            PressToggle();
         }
     }
     // Create Room: picking a file leads to the game's "Select Players", which sizes the room; Back
@@ -613,6 +911,33 @@ void Draw() {
                players == GameMenus::SelectPlayers::Other) {
         Show(Screen::None);
     }
+    // Touch (the Android app's Tap) and mouse clicks on the menus.
+    static int titleCheck = 0;
+    static bool title = false;
+    if (++titleCheck % 10 == 0) {
+        title = scene == kSceneStage && GameMenus::HasProfile(kProfileOpeningTitle);
+    }
+    g_tapScreen.store(Modal() || g_ui.toggleShown || scene == kSceneBoot || title ||
+                          (scene == kSceneGameSetup && players == GameMenus::SelectPlayers::Choosing),
+                      std::memory_order_release);
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        float tapX = -1.0f, tapY = -1.0f;
+        const uint64_t tap = g_tap.exchange(0, std::memory_order_acq_rel);
+        if ((tap >> 63) != 0) {
+            tapX = static_cast<float>((tap >> 16) & 0xFFFF) / 65535.0f * io.DisplaySize.x;
+            tapY = static_cast<float>(tap & 0xFFFF) / 65535.0f * io.DisplaySize.y;
+        } else if (io.MouseClicked[0] && !io.WantCaptureMouse) {
+            tapX = io.MousePos.x;
+            tapY = io.MousePos.y;
+        }
+        if (tapX >= 0.0f) {
+            const GameLayout::View view = GameLayout::GameView();
+            TapAt((tapX - view.centerX) / view.scale, (view.centerY - tapY) / view.scale,
+                  (tapX - view.centerX) / view.gameScaleX, scene, title);
+        }
+    }
+
     if (g_ui.screen == Screen::None) {
         g_ui.events = 0;  // presses on the game's own screens are the game's
         if (g_ui.toggleShown) {
@@ -645,6 +970,7 @@ void Draw() {
     GetAssets();
     ++g_ui.frame;
     Canvas c{list, GameLayout::GameView(), std::min(1.0f, g_ui.frame / 8.0f)};
+    g_hits.clear();  // the screen below registers its buttons as it draws them
     if (g_ui.toggleShown) {
         DrawToggle(Canvas{list, c.view, 1.0f});  // under LAN's windows and their veil
     }
@@ -681,6 +1007,10 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         return;
     }
     if (chan == 0) {
+        // A tap on the game's own screens plays back as presses of the first remote.
+        if (!Modal()) {
+            sample.hold |= NavButtons();
+        }
         // Menu events from the first remote: screen directions for a sideways remote, the D-pad's
         // own for one held upright with a Nunchuk.
         const uint32_t hold = sample.hold;

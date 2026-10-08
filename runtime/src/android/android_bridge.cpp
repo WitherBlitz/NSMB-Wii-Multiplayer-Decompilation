@@ -10,6 +10,7 @@
 #include "netplay/net_socket.h"
 #include "netplay_session.h"
 #include "netplay_start.h"
+#include "netplay_ui.h"
 
 #include <SDL3/SDL_system.h>
 #include <jni.h>
@@ -104,6 +105,18 @@ JNIEXPORT jboolean JNICALL Java_com_wither_nsmbw_GameActivity_nativeSessionActiv
 JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativePrepareToLeave(JNIEnv*, jclass)
 {
     NetplayStart::PrepareToLeave();
+}
+
+// GameActivity.nativeTap: a tap on the game's menus, as fractions of the screen (netplay_ui.h).
+JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeTap(JNIEnv*, jclass, jfloat x, jfloat y)
+{
+    NetplayUi::Tap(x, y);
+}
+
+// GameActivity.nativeTapScreen: whether a menu that taps drive is up (the app hides its remote).
+JNIEXPORT jboolean JNICALL Java_com_wither_nsmbw_GameActivity_nativeTapScreen(JNIEnv*, jclass)
+{
+    return NetplayUi::TapScreenUp() ? JNI_TRUE : JNI_FALSE;
 }
 
 } // extern "C"

@@ -23,6 +23,9 @@ struct View {
     float centerX = 0.0f;
     float centerY = 0.0f;
     float scale = 1.0f;
+    // The game's own layouts across: in Fill on a screen wider than 16:9 they stretch their
+    // 832-unit 16:9 canvas over the whole width, so their x is scaled by this, not `scale`.
+    float gameScaleX = 1.0f;
 };
 // The game picture's rectangle for the current display mode (4:3 or 16:9 pillar/letterbox,
 // stretched for Fill), with 456 layout units across its height like the game's own layouts.
@@ -68,6 +71,9 @@ public:
     void Draw(ImDrawList* list, const View& view, const std::string& paneName, const DrawParams& params) const;
     // Size and translation of a pane as authored, for laying out copies.
     bool PaneRect(const std::string& paneName, float& x, float& y, float& w, float& h) const;
+    // Where a pane sits in the whole layout (its centre for a centred origin), as authored.
+    bool PaneWorldRect(const std::string& paneName, float& x, float& y, float& w, float& h) const;
+    std::vector<std::string> PaneNames() const;
 
     struct Material;
     struct Pane;

@@ -958,6 +958,50 @@ bool Layout::PaneRect(const std::string& paneName, float& x, float& y, float& w,
     return true;
 }
 
+namespace {
+// Translation and scale (rotation ignored) accumulated from the root down to `target`.
+bool WorldOf(const Layout::Pane* pane, const Layout::Pane* target, float px, float py, float psx, float psy, float& x,
+             float& y, float& sx, float& sy) {
+    const float wx = px + pane->tx * psx, wy = py + pane->ty * psy;
+    const float wsx = psx * pane->sx, wsy = psy * pane->sy;
+    if (pane == target) {
+        x = wx;
+        y = wy;
+        sx = wsx;
+        sy = wsy;
+        return true;
+    }
+    for (const Layout::Pane* child : pane->children) {
+        if (WorldOf(child, target, wx, wy, wsx, wsy, x, y, sx, sy)) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+bool Layout::PaneWorldRect(const std::string& paneName, float& x, float& y, float& w, float& h) const {
+    const auto it = m_byName.find(paneName);
+    if (!m_loaded || it == m_byName.end()) {
+        return false;
+    }
+    float sx = 1, sy = 1;
+    if (!WorldOf(m_panes[0].get(), it->second, 0, 0, 1, 1, x, y, sx, sy)) {
+        return false;
+    }
+    w = it->second->w * sx;
+    h = it->second->h * sy;
+    return true;
+}
+
+std::vector<std::string> Layout::PaneNames() const {
+    std::vector<std::string> names;
+    for (const auto& pane : m_panes) {
+        names.push_back(pane->name);
+    }
+    return names;
+}
+
 void Layout::Draw(ImDrawList* list, const View& view, const std::string& paneName, const DrawParams& params) const {
     if (!m_loaded || list == nullptr) {
         return;
@@ -1216,6 +1260,7 @@ View GameView() {
     view.centerX = display.x / 2;
     view.centerY = display.y / 2;
     view.scale = h / 456.0f;
+    view.gameScaleX = aspect > 0.0f ? view.scale : display.x / 832.0f;
     return view;
 }
 

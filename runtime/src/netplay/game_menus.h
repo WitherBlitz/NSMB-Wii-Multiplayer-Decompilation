@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 // Where New Super Mario Bros. Wii's own setup menus are (the GAME_SETUP scene's file select and
 // "Select Players" screens), read from its objects. The object tree and state IDs sit at fixed
@@ -25,6 +26,12 @@ bool FileSelectWaiting();
 int FileSelectCursor();
 // The file select's cursor as the game keeps it (0-2 the files, higher the buttons below), -1 if unknown.
 int FileSelectRawCursor();
+
+// Whether an object of this profile exists (0x2BB EVENT_OPENING_TITLE: the title screen is up).
+bool HasProfile(uint16_t profile);
+
+// Every object profile in the tree, sorted (for finding which screen is up).
+std::vector<uint16_t> Profiles();
 
 // dScene_c::m_nowScene (0x003 world map, 0x005 stage/title, 0x00A game setup, ...).
 uint16_t CurrentScene();
