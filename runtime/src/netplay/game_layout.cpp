@@ -1260,7 +1260,8 @@ View GameView() {
     view.centerX = display.x / 2;
     view.centerY = display.y / 2;
     view.scale = h / 456.0f;
-    view.gameScaleX = aspect > 0.0f ? view.scale : display.x / 832.0f;
+    // The game's layouts keep square pixels on a widened canvas too (display_settings.cpp).
+    view.gameScaleX = view.scale;
     return view;
 }
 

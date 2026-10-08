@@ -61,12 +61,10 @@ JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeSetTouchState(
 JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeApplyDisplaySettings(
     JNIEnv*, jclass, jint aspect, jfloat renderScale, jboolean showFps)
 {
-    DisplaySettings::Settings settings;
-    settings.aspect = aspect < 0 || aspect > 2 ? DisplaySettings::kAspectFill : static_cast<int32_t>(aspect);
-    settings.renderScale = renderScale > 0.0f ? renderScale : 1.0f;
-    DisplaySettings::Request(settings);
-    RuntimeConfigFile::SetAspectMode(settings.aspect);
-    RuntimeConfigFile::SetResolutionMultiplier(settings.renderScale);
+    // Through the settings overlay, so the game's own settings window shows the same choice. A scale
+    // of 0 is "match the screen".
+    settings_overlay::SetAspect(aspect < 0 || aspect > 2 ? DisplaySettings::kAspectFill : static_cast<int32_t>(aspect));
+    settings_overlay::SetRenderScale(renderScale >= 0.0f ? renderScale : 1.0f);
     settings_overlay::SetShowFps(showFps == JNI_TRUE);
 }
 
@@ -111,6 +109,22 @@ JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativePrepareToLeave(J
 JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeTap(JNIEnv*, jclass, jfloat x, jfloat y)
 {
     NetplayUi::Tap(x, y);
+}
+
+// GameActivity.nativeTakeSettings: {render scale, show FPS 1/0, aspect} when the game's settings
+// window changed them since the last call, else null; the app saves them for the next start.
+JNIEXPORT jfloatArray JNICALL Java_com_wither_nsmbw_GameActivity_nativeTakeSettings(JNIEnv* env, jclass)
+{
+    float scale = 1.0f;
+    bool showFps = false;
+    int aspect = DisplaySettings::kAspectFill;
+    if (!NetplayUi::TakeSettingsChange(scale, showFps, aspect)) {
+        return nullptr;
+    }
+    jfloatArray result = env->NewFloatArray(3);
+    const jfloat values[3] = {scale, showFps ? 1.0f : 0.0f, static_cast<jfloat>(aspect)};
+    env->SetFloatArrayRegion(result, 0, 3, values);
+    return result;
 }
 
 // GameActivity.nativeTapScreen: whether a menu that taps drive is up (the app hides its remote).

@@ -31,5 +31,8 @@ void Tap(float x, float y);
 // True while a screen that taps can drive is up (the strap and title screens, the file select,
 // "Select Players", these menus): the Android app hides its on-screen remote then.
 bool TapScreenUp();
+// The settings window changed the render scale, the aspect or the FPS counter since the last call:
+// the Android app copies them into its own settings, which it writes to Config.toml at every start.
+bool TakeSettingsChange(float& renderScale, bool& showFps, int& aspect);
 
 } // namespace NetplayUi

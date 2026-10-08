@@ -9,6 +9,8 @@
 
 #include "aurora_events.h"
 #include "hle_stubs.h"
+#include "display_settings.h"
+#include "keybinds.h"
 #include "settings_overlay.h"
 
 #include <imgui.h>
@@ -39,7 +41,7 @@ constexpr uint32_t kLeft = 0x0001, kRight = 0x0002, kDown = 0x0004, kUp = 0x0008
 constexpr uint32_t kScreenLeft = kUp, kScreenRight = kDown, kScreenUp = kRight, kScreenDown = kLeft;
 
 // None is Couch, the game's own screens. Every other screen is part of LAN play.
-enum class Screen { None, Lan, ChooseFile, Count, Rooms, Room, Message };
+enum class Screen { None, Lan, ChooseFile, Count, Rooms, Room, Message, Settings };
 
 constexpr uint16_t kSceneBoot = 0x000;       // the strap screen ("Hold the Wii Remote sideways")
 constexpr uint16_t kSceneStage = 0x005;      // a course, or the title screen's
@@ -54,7 +56,8 @@ struct Ui {
     Screen screen = Screen::None;
     int cursor = 0;
     bool toggleShown = false;    // the LAN / Couch toggle is on the file select right now
-    bool toggleFocus = false;    // the cursor is on it (moved up from the top file): the remote is ours
+    bool toggleFocus = false;    // the cursor is on the top bar (moved up from the files): the remote is ours
+    int topItem = 0;             // which of the top bar: 0 the Couch / LAN toggle, 1 the settings gear
     uint32_t prevHold = 0;       // channel 1's buttons at the last read
     uint32_t events = 0;         // menu events since the last frame
     bool swallowConfirm = false; // keep a confirm press from the game until it is released
@@ -75,13 +78,17 @@ Ui g_ui;
 // These windows' buttons as last drawn, in layout units: a tap on one picks it as the remote would.
 struct Hit {
     float x, y, w, h;
-    int cursor;  // -1: leave the cursor as it is
-    bool back;
+    int cursor;      // -1: leave the cursor as it is
+    uint32_t event;  // the menu event a tap makes (Event, below)
 };
 std::vector<Hit> g_hits;
 
 void AddHit(float x, float y, float w, float h, int cursor, bool back = false) {
-    g_hits.push_back(Hit{x, y, w, h, cursor, back});
+    g_hits.push_back(Hit{x, y, w, h, cursor, back ? static_cast<uint32_t>(kEvBack) : static_cast<uint32_t>(kEvConfirm)});
+}
+
+void AddHitEvent(float x, float y, float w, float h, int cursor, uint32_t event) {
+    g_hits.push_back(Hit{x, y, w, h, cursor, event});
 }
 
 std::atomic<uint64_t> g_tap{0};  // a tap for the next frame: bit 63, then x and y as 16-bit fractions
@@ -202,6 +209,7 @@ const char* ScreenName(Screen screen) {
     case Screen::Rooms: return "rooms";
     case Screen::Room: return "room";
     case Screen::Message: return "message";
+    case Screen::Settings: return "settings";
     }
     return "?";
 }
@@ -302,7 +310,7 @@ void Cursor(const Canvas& c, float x, float y, float w, float h, int frame) {
 
 // A green-to-yellow button pill like the game's yes/no buttons, w x 53 units, centred on (x, y).
 void Button(const Canvas& c, const std::string& label, float x, float y, float w, bool selected, bool enabled,
-            int frame) {
+            int frame, float textSize = 30.0f, float h = 53.0f) {
     Assets& a = GetAssets();
     GameLayout::DrawParams p;
     p.alpha = c.alpha * (enabled ? 1.0f : 0.55f);
@@ -310,9 +318,9 @@ void Button(const Canvas& c, const std::string& label, float x, float y, float w
     p.offsetY = y + 118.0f;  // the pane is authored at (0, -118)
     p.scale = selected ? 1.0f + 0.04f * Pulse(frame) : 0.94f;
     p.paneScale["P_centerBase_00"] = 1.0f;  // authored at 0: it grows in through an animation
-    p.paneSize["P_centerBase_00"] = {w, 53.0f};
-    p.paneSize["W_button_02"] = {w + 5.0f, 63.0f};
-    p.paneSize["P_shadow_02"] = {w, 53.0f};
+    p.paneSize["P_centerBase_00"] = {w, h};
+    p.paneSize["W_button_02"] = {w + 5.0f, h + 10.0f};
+    p.paneSize["P_shadow_02"] = {w, h};
     p.visible["T_center_00"] = false;
     p.visible["T_center_01"] = false;
     if (!enabled) {
@@ -322,9 +330,9 @@ void Button(const Canvas& c, const std::string& label, float x, float y, float w
     const float scale = p.scale;
     Canvas t = c;
     t.alpha = p.alpha;
-    Text(t, label, x, y, 30.0f * scale);
+    Text(t, label, x, y, textSize * scale);
     if (selected) {
-        Cursor(c, x, y, w * scale + 6, 53 * scale + 6, frame);
+        Cursor(c, x, y, w * scale + 6, h * scale + 6, frame);
     }
 }
 
@@ -346,12 +354,301 @@ std::string PlayerLine(uint8_t slot, const std::string& name, bool you) {
 // The LAN / Couch toggle in the empty right half of the file select's title bar: one of the game's
 // green buttons, reached by moving up from the top file. Couch is the game as it is; pressing it
 // switches to LAN (Join or Create Room), and back to Couch from any LAN step on the file select.
-constexpr float kToggleX = 228.0f, kToggleY = 192.0f, kToggleW = 176.0f;
+constexpr float kToggleX = 214.0f, kToggleY = 192.0f, kToggleW = 166.0f;
+constexpr float kGearY = kToggleY;
+
+constexpr float kGearX = kToggleX + kToggleW / 2 + 46.0f, kGearW = 62.0f;
+
+ImVec2 ToScreen(const Canvas& c, float x, float y) {
+    return ImVec2(c.view.centerX + x * c.view.scale, c.view.centerY - y * c.view.scale);
+}
+
+// A cog: eight teeth around a ring, drawn in the dark of the game's text edges.
+void Gear(const Canvas& c, float x, float y, float r) {
+    const ImVec2 centre = ToScreen(c, x, y);
+    const float s = c.view.scale;
+    const ImU32 color = IM_COL32(70, 62, 40, static_cast<int>(235 * c.alpha));
+    for (int i = 0; i < 8; ++i) {
+        const float a = i * 3.14159265f / 4.0f;
+        const float ca = std::cos(a), sa = std::sin(a);
+        const float in = r * 0.72f * s, out = r * 1.18f * s, half = r * 0.26f * s;
+        c.list->AddQuadFilled(ImVec2(centre.x + ca * in - sa * half, centre.y + sa * in + ca * half),
+                              ImVec2(centre.x + ca * out - sa * half, centre.y + sa * out + ca * half),
+                              ImVec2(centre.x + ca * out + sa * half, centre.y + sa * out - ca * half),
+                              ImVec2(centre.x + ca * in + sa * half, centre.y + sa * in - ca * half), color);
+    }
+    c.list->AddCircle(centre, r * 0.62f * s, color, 24, r * 0.42f * s);
+}
 
 void DrawToggle(const Canvas& c) {
     const bool lan = g_ui.screen != Screen::None;
     Text(c, "Play:", kToggleX - kToggleW / 2 - 12, kToggleY, 24, 2, 0xFFFFFFFFu);
-    Button(c, lan ? "LAN" : "Couch", kToggleX, kToggleY, kToggleW, g_ui.toggleFocus, true, g_ui.frame);
+    Button(c, lan ? "LAN" : "Couch", kToggleX, kToggleY, kToggleW, g_ui.toggleFocus && g_ui.topItem == 0, true,
+           g_ui.frame);
+    Button(c, "", kGearX, kGearY, kGearW, g_ui.toggleFocus && g_ui.topItem == 1, true, g_ui.frame);
+    Gear(c, kGearX, kGearY, 13.0f);
+}
+
+// ---------------------------------------------------------------- settings
+// Two tabs. Video: "Nx" renders N x 480 lines in a 16:9 picture (black bars beside it on a wider
+// screen), "Nx Ultrawide" (offered on screens wider than 16:9) the same lines across the whole
+// screen with the game's view widened, and Match Screen Resolution the screen's own pixels across
+// the whole screen (the multiplier is greyed out meanwhile). Keybinds: the keyboard's remote.
+constexpr float kScales[] = {0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f};
+std::atomic<bool> g_settingsChanged{false};  // the Android app copies them into its own settings
+int g_settingsTab = 0;                       // 0 Video, 1 Keybinds
+float g_lastScale = 1.0f;                    // the multiplier Match Screen Resolution returns to
+bool g_lastWide = true;
+
+// Cursor rows. Video: 0 tabs, 1 resolution, 2 match screen, 3 FPS, 4 OK. Keybinds: 0 tabs,
+// 1-12 the controls (two columns of six), 13 Reset Defaults, 14 OK.
+constexpr int kVideoOk = 4;
+constexpr int kKeyRows = 6;
+constexpr int kKeyReset = 1 + Keybinds::kActionCount, kKeyOk = kKeyReset + 1;
+
+struct VideoChoice {
+    float scale;
+    bool wide;
+};
+
+bool CurrentWide() {
+    return settings_overlay::Aspect() == DisplaySettings::kAspectFill;
+}
+
+std::vector<VideoChoice> VideoChoices() {
+    std::vector<VideoChoice> choices;
+    for (const float scale : kScales) {
+        choices.push_back({scale, false});
+        if (DisplaySettings::SurfaceWide()) {
+            choices.push_back({scale, true});
+        }
+    }
+    return choices;
+}
+
+int CurrentChoice(const std::vector<VideoChoice>& choices) {
+    const float current = settings_overlay::RenderScale();
+    const float scale = current > 0.0f ? current : g_lastScale;
+    const bool wide = (current > 0.0f ? CurrentWide() : g_lastWide) && DisplaySettings::SurfaceWide();
+    int best = -1;
+    for (int i = 0; i < static_cast<int>(choices.size()); ++i) {
+        if (std::fabs(choices[i].scale - scale) < 0.01f && choices[i].wide == wide) {
+            best = i;
+        }
+    }
+    if (best < 0) {
+        for (int i = 0; i < static_cast<int>(choices.size()); ++i) {
+            if (std::fabs(choices[i].scale - 1.0f) < 0.01f && choices[i].wide == wide) {
+                best = i;
+            }
+        }
+    }
+    return std::max(best, 0);
+}
+
+std::string ChoiceLabel(const VideoChoice& choice) {
+    char text[40];
+    if (choice.wide) {
+        std::snprintf(text, sizeof(text), "%gx Ultrawide", choice.scale);
+    } else {
+        std::snprintf(text, sizeof(text), "%gx (%dp)", choice.scale,
+                      static_cast<int>(std::lround(480.0f * choice.scale)));
+    }
+    return text;
+}
+
+void ApplyVideo(float scale, bool wide) {
+    if (settings_overlay::Aspect() != DisplaySettings::kAspect4x3) {
+        settings_overlay::SetAspect(wide ? DisplaySettings::kAspectFill : DisplaySettings::kAspect16x9);
+    }
+    settings_overlay::SetRenderScale(scale);
+    g_settingsChanged = true;
+}
+
+void StepVideo(int direction, bool wrap) {
+    if (settings_overlay::RenderScale() <= 0.0f) {
+        return;  // greyed out: Match Screen Resolution decides
+    }
+    const std::vector<VideoChoice> choices = VideoChoices();
+    const int count = static_cast<int>(choices.size());
+    int next = CurrentChoice(choices) + direction;
+    if (next >= count) {
+        next = wrap ? 0 : count - 1;
+    } else if (next < 0) {
+        next = wrap ? count - 1 : 0;
+    }
+    g_lastScale = choices[next].scale;
+    g_lastWide = choices[next].wide;
+    ApplyVideo(choices[next].scale, choices[next].wide);
+}
+
+void ToggleMatchScreen() {
+    const float scale = settings_overlay::RenderScale();
+    if (scale <= 0.0f) {
+        ApplyVideo(g_lastScale, g_lastWide && DisplaySettings::SurfaceWide());
+    } else {
+        g_lastScale = scale;
+        g_lastWide = CurrentWide();
+        ApplyVideo(0.0f, true);
+    }
+}
+
+void Arrow(const Canvas& c, float x, float y, bool right, bool selected, bool enabled = true) {
+    const ImVec2 p = ToScreen(c, x, y);
+    const float s = c.view.scale * (selected ? 1.0f + 0.12f * Pulse(g_ui.frame) : 1.0f);
+    const float d = right ? 1.0f : -1.0f;
+    const float alpha = c.alpha * (enabled ? 1.0f : 0.45f);
+    const ImU32 fill = enabled ? IM_COL32(255, 230, 60, static_cast<int>(255 * alpha))
+                               : IM_COL32(170, 170, 170, static_cast<int>(255 * alpha));
+    const ImU32 edge = IM_COL32(48, 32, 10, static_cast<int>(220 * alpha));
+    const ImVec2 a(p.x + d * 14 * s, p.y), b(p.x - d * 10 * s, p.y - 15 * s), e(p.x - d * 10 * s, p.y + 15 * s);
+    c.list->AddTriangleFilled(a, b, e, fill);
+    c.list->AddTriangle(a, b, e, edge, 2.5f * c.view.scale);
+}
+
+void Checkbox(const Canvas& c, float x, float y, bool on) {
+    const ImVec2 p = ToScreen(c, x, y);
+    const float s = c.view.scale, h = 15.0f * s;
+    c.list->AddRectFilled(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), IM_COL32(255, 255, 255, static_cast<int>(240 * c.alpha)), 5 * s);
+    c.list->AddRect(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), IM_COL32(48, 32, 10, static_cast<int>(230 * c.alpha)), 5 * s, 0, 3 * s);
+    if (on) {
+        const ImVec2 points[] = {ImVec2(p.x - 9 * s, p.y), ImVec2(p.x - 2 * s, p.y + 8 * s), ImVec2(p.x + 10 * s, p.y - 9 * s)};
+        c.list->AddPolyline(points, 3, IM_COL32(40, 160, 40, static_cast<int>(255 * c.alpha)), 0, 5 * s);
+    }
+}
+
+constexpr float kSettingsHeight = 440.0f, kSettingsWidth = 720.0f;
+
+void DrawSettingsTabs(const Canvas& c) {
+    const float y = kSettingsHeight / 2 - 42.0f;
+    const char* names[] = {"Video", "Keybinds"};
+    for (int tab = 0; tab < 2; ++tab) {
+        const float x = tab == 0 ? -125.0f : 125.0f;
+        Button(c, names[tab], x, y, 220, g_ui.cursor == 0 && g_settingsTab == tab, g_settingsTab == tab, g_ui.frame);
+        AddHitEvent(x, y, 228, 60, 0, tab == 0 ? kEvLeft : kEvRight);
+    }
+}
+
+void DrawVideoTab(const Canvas& c) {
+    const float scale = settings_overlay::RenderScale();
+    const bool match = scale <= 0.0f;
+    const std::vector<VideoChoice> choices = VideoChoices();
+    const VideoChoice shown = choices[CurrentChoice(choices)];
+    Text(c, "Resolution", -300, 95, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
+    Button(c, ChoiceLabel(shown), 105, 95, 270, g_ui.cursor == 1, !match, g_ui.frame);
+    Arrow(c, -50, 95, false, g_ui.cursor == 1, !match);
+    Arrow(c, 260, 95, true, g_ui.cursor == 1, !match);
+    if (!match) {
+        AddHitEvent(-50, 95, 54, 62, 1, kEvLeft);
+        AddHitEvent(260, 95, 54, 62, 1, kEvRight);
+        AddHitEvent(105, 95, 276, 62, 1, kEvRight);
+    }
+    Button(c, "Match Screen Resolution", 24, 25, 470, g_ui.cursor == 2, true, g_ui.frame);
+    Checkbox(c, -185, 25, match);
+    AddHit(0, 25, 480, 62, 2);
+    Button(c, "Show FPS Counter", 24, -45, 470, g_ui.cursor == 3, true, g_ui.frame);
+    Checkbox(c, -185, -45, settings_overlay::ShowFps());
+    AddHit(0, -45, 480, 62, 3);
+    const char* hint = match ? "The screen's own resolution, filling the whole screen."
+                       : !DisplaySettings::SurfaceWide() ? "Rendered at this many lines, then scaled to the screen."
+                       : shown.wide                      ? "Fills the whole screen with a wider view."
+                                                         : "16:9, with black bars at the sides.";
+    Text(c, hint, 0, -108, 21);
+    Button(c, "OK", 0, -kSettingsHeight / 2 + 43.0f, 232, g_ui.cursor == kVideoOk, true, g_ui.frame);
+    AddHit(0, -kSettingsHeight / 2 + 43.0f, 240, 60, kVideoOk);
+}
+
+void DrawKeybindsTab(const Canvas& c) {
+    const int capturing = Keybinds::Capturing();
+    for (int action = 0; action < Keybinds::kActionCount; ++action) {
+        const int column = action / kKeyRows, row = action % kKeyRows;
+        const float x0 = column == 0 ? -178.0f : 178.0f;
+        const float y = 122.0f - 44.0f * row;
+        Text(c, Keybinds::ActionName(action), x0 - 168, y, 21, 0);
+        const std::string label = capturing == action ? "Press a key..." : Keybinds::KeyLabel(action);
+        const float size = label.size() > 16 ? 17.0f : label.size() > 11 ? 19.0f : 22.0f;
+        Button(c, label, x0 + 78, y, 172, g_ui.cursor == 1 + action, true, g_ui.frame, size, 38.0f);
+        AddHit(x0 + 78, y, 178, 42, 1 + action);
+    }
+#ifdef __ANDROID__
+    const char* note = "For a keyboard plugged into the device.";
+#else
+    const char* note = "Controllers: F10 > Controls.";
+#endif
+    Text(c, capturing >= 0 ? "Press the new key (Esc cancels)." : note, 0, -140, 20);
+    const float y = -kSettingsHeight / 2 + 43.0f;
+    Button(c, "Reset Defaults", -126, y, 232, g_ui.cursor == kKeyReset, true, g_ui.frame, 26.0f);
+    Button(c, "OK", 126, y, 232, g_ui.cursor == kKeyOk, true, g_ui.frame);
+    AddHit(-126, y, 240, 60, kKeyReset);
+    AddHit(126, y, 240, 60, kKeyOk);
+}
+
+void DrawSettings(const Canvas& c) {
+    Window(c, kSettingsHeight, kSettingsWidth);
+    DrawSettingsTabs(c);
+    if (g_settingsTab == 0) {
+        DrawVideoTab(c);
+    } else {
+        DrawKeybindsTab(c);
+    }
+}
+
+void CloseSettings() {
+    Show(Screen::None);  // back to the file select, the cursor on the gear
+    g_ui.toggleFocus = true;
+    g_ui.topItem = 1;
+}
+
+void HandleSettings(bool left, bool right, bool up, bool down, bool confirm, bool back) {
+    if (Keybinds::Capturing() >= 0) {
+        Keybinds::PollCapture();  // the keyboard is the capture's until a key is picked
+        return;
+    }
+    int& cursor = g_ui.cursor;
+    if (cursor == 0) {
+        if (left || right) {
+            g_settingsTab = left ? 0 : 1;
+        } else if (confirm) {
+            g_settingsTab ^= 1;
+        } else if (down) {
+            cursor = g_settingsTab == 0 && settings_overlay::RenderScale() <= 0.0f ? 2 : 1;
+        } else if (back) {
+            CloseSettings();
+        }
+        return;
+    }
+    if (back) {
+        CloseSettings();
+        return;
+    }
+    if (g_settingsTab == 0) {
+        const bool match = settings_overlay::RenderScale() <= 0.0f;
+        if (up) cursor = cursor == 2 && match ? 0 : cursor - 1;
+        if (down) cursor = std::min(kVideoOk, cursor + 1);
+        if (cursor == 1 && (left || right || confirm)) {
+            StepVideo(left ? -1 : 1, confirm);
+        } else if (confirm && cursor == 2) {
+            ToggleMatchScreen();
+        } else if (confirm && cursor == 3) {
+            settings_overlay::SetShowFps(!settings_overlay::ShowFps());
+            g_settingsChanged = true;
+        } else if (confirm && cursor == kVideoOk) {
+            CloseSettings();
+        }
+        return;
+    }
+    if (cursor >= kKeyReset) {
+        if (left || right) cursor = cursor == kKeyReset ? kKeyOk : kKeyReset;
+        if (up) cursor = cursor == kKeyReset ? kKeyRows : 2 * kKeyRows;
+        if (confirm && cursor == kKeyReset) Keybinds::ResetDefaults();
+        if (confirm && cursor == kKeyOk) CloseSettings();
+        return;
+    }
+    const int action = cursor - 1, column = action / kKeyRows, row = action % kKeyRows;
+    if (up) cursor = row == 0 ? 0 : cursor - 1;
+    if (down) cursor = row == kKeyRows - 1 ? (column == 0 ? kKeyReset : kKeyOk) : cursor + 1;
+    if ((left && column == 1) || (right && column == 0)) cursor = 1 + (1 - column) * kKeyRows + row;
+    if (confirm) Keybinds::BeginCapture(action);
 }
 
 void DrawLan(const Canvas& c) {
@@ -536,6 +833,7 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
             // Back to Couch, with the cursor still on the toggle.
             Show(Screen::None);
             g_ui.toggleFocus = true;
+            g_ui.topItem = 0;
         }
         if (confirm) {
             if (g_ui.cursor == 0) {
@@ -603,6 +901,9 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
             Show(g_ui.afterMessage);
         }
         break;
+    case Screen::Settings:
+        HandleSettings(left, right, up, down, confirm, back);
+        break;
     case Screen::None:
         break;
     }
@@ -633,14 +934,10 @@ void TapAt(float lx, float ly, float gx, uint16_t scene, bool title) {
     if (Modal()) {
         for (const Hit& hit : g_hits) {
             if (in(hit.x, hit.y, hit.w, hit.h)) {
-                if (hit.back) {
-                    g_ui.events |= kEvBack;
-                } else {
-                    if (hit.cursor >= 0) {
-                        g_ui.cursor = hit.cursor;
-                    }
-                    g_ui.events |= kEvConfirm;
+                if (hit.cursor >= 0) {
+                    g_ui.cursor = hit.cursor;
                 }
+                g_ui.events |= hit.event;
                 return;
             }
         }
@@ -648,6 +945,11 @@ void TapAt(float lx, float ly, float gx, uint16_t scene, bool title) {
     }
     if (g_ui.toggleShown && in(kToggleX, kToggleY, kToggleW + 16, 66)) {
         PressToggle();
+        return;
+    }
+    if (g_ui.toggleShown && g_ui.screen == Screen::None && in(kGearX, kGearY, kGearW + 16, 66)) {
+        g_ui.toggleFocus = false;
+        Show(Screen::Settings);
         return;
     }
     // Anywhere else is the game's: the cursor leaves the toggle so the game takes the presses.
@@ -709,6 +1011,16 @@ void Tap(float x, float y) {
 
 bool TapScreenUp() {
     return g_tapScreen.load(std::memory_order_acquire);
+}
+
+bool TakeSettingsChange(float& renderScale, bool& showFps, int& aspect) {
+    if (!g_settingsChanged.exchange(false)) {
+        return false;
+    }
+    renderScale = settings_overlay::RenderScale();
+    showFps = settings_overlay::ShowFps();
+    aspect = settings_overlay::Aspect();
+    return true;
 }
 
 void OnSessionStall() {
@@ -897,6 +1209,13 @@ void Draw() {
             // Back down to the files; the press that left the toggle stays with us.
             g_ui.toggleFocus = false;
             g_ui.heldFromMenu = g_ui.prevHold;
+        } else if (ev & kEvRight) {
+            g_ui.topItem = 1;
+        } else if (ev & kEvLeft) {
+            g_ui.topItem = 0;
+        } else if ((ev & kEvConfirm) && g_ui.topItem == 1) {
+            g_ui.toggleFocus = false;
+            Show(Screen::Settings);
         } else if (ev & kEvConfirm) {
             PressToggle();
         }
@@ -997,6 +1316,10 @@ void Draw() {
         Veil(c);
         DrawMessage(c);
         break;
+    case Screen::Settings:
+        Veil(c);
+        DrawSettings(c);
+        break;
     case Screen::None:
         break;
     }
@@ -1031,6 +1354,7 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         if (g_ui.toggleShown && !g_ui.toggleFocus && !Modal() && (pressed & screenUp) != 0 && fileCursor >= 0 &&
             fileCursor <= 2) {
             g_ui.toggleFocus = true;
+            g_ui.topItem = 0;
             g_ui.events &= ~kEvUp;
             g_ui.heldFromMenu |= screenUp;
         }

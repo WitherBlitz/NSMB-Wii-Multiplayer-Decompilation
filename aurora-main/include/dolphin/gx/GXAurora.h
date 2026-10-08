@@ -96,6 +96,9 @@ typedef enum _AuroraViewportPolicy {
  * When AURORA_VIEWPORT_NATIVE is used, GXSetTexCopySrc/GXSetTexCopyDst will use native framebuffer resolution.
  */
 void AuroraSetViewportPolicy(AuroraViewportPolicy policy);
+// NSMBW: widen cameras (perspective, and screen-sized orthographic) set up for 16:9 to this aspect
+// (0 = off), for a screen the picture fills that is wider than 16:9.
+void AuroraSetWidePerspectiveAspect(float aspect);
 
 /**
  * Retrieves the current content framebuffer size.

@@ -1,6 +1,7 @@
 #include "virtual_remote.h"
 
 #include "input_bindings.h"
+#include "keybinds.h"
 #include "runtime_log.h"
 
 #include <dolphin/pad.h>
@@ -94,22 +95,23 @@ Intent KeyboardIntent() {
     if (SDL_GetKeyboardFocus() == nullptr) {
         return intent;
     }
-    int count = 0;
-    const bool* keys = SDL_GetKeyboardState(&count);
-    const auto held = [&](SDL_Scancode code) { return keys != nullptr && code < count && keys[code]; };
-    if (held(SDL_SCANCODE_LEFT)) intent.buttons |= kScreenLeft;
-    if (held(SDL_SCANCODE_RIGHT)) intent.buttons |= kScreenRight;
-    if (held(SDL_SCANCODE_UP)) intent.buttons |= kScreenUp;
-    if (held(SDL_SCANCODE_DOWN)) intent.buttons |= kScreenDown;
-    if (held(SDL_SCANCODE_X) || held(SDL_SCANCODE_SPACE)) intent.buttons |= kWpadTwo;
-    if (held(SDL_SCANCODE_Z) || held(SDL_SCANCODE_LSHIFT)) intent.buttons |= kWpadOne;
-    if (held(SDL_SCANCODE_A)) intent.buttons |= kWpadA;
-    if (held(SDL_SCANCODE_RETURN) || held(SDL_SCANCODE_KP_ENTER)) intent.buttons |= kWpadPlus;
-    if (held(SDL_SCANCODE_MINUS) || held(SDL_SCANCODE_KP_MINUS) || held(SDL_SCANCODE_TAB)) {
-        intent.buttons |= kWpadMinus;
+    // The keys come from the game's Keybinds tab (Config.toml [keyboard]); none count while one
+    // is being picked there, or until the key picked is let go.
+    if (Keybinds::Suppressed()) {
+        return intent;
     }
-    intent.shake = held(SDL_SCANCODE_C) || held(SDL_SCANCODE_LCTRL) || held(SDL_SCANCODE_RCTRL);
-    intent.tilt = (held(SDL_SCANCODE_E) ? 1.0f : 0.0f) - (held(SDL_SCANCODE_Q) ? 1.0f : 0.0f);
+    using namespace Keybinds;
+    if (Held(kLeft)) intent.buttons |= kScreenLeft;
+    if (Held(kRight)) intent.buttons |= kScreenRight;
+    if (Held(kUp)) intent.buttons |= kScreenUp;
+    if (Held(kDown)) intent.buttons |= kScreenDown;
+    if (Held(kJump)) intent.buttons |= kWpadTwo;
+    if (Held(kRun)) intent.buttons |= kWpadOne;
+    if (Held(Keybinds::kA)) intent.buttons |= kWpadA;
+    if (Held(kPlus)) intent.buttons |= kWpadPlus;
+    if (Held(kMinus)) intent.buttons |= kWpadMinus;
+    intent.shake = Held(kShake);
+    intent.tilt = (Held(kTiltRight) ? 1.0f : 0.0f) - (Held(kTiltLeft) ? 1.0f : 0.0f);
     return intent;
 }
 

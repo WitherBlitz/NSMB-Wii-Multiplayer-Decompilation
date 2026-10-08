@@ -113,7 +113,7 @@ int g_displayMode = [] {
 }();
 bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
 bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
-bool g_showFps = RuntimeConfigFile::ShowFps(true);
+bool g_showFps = RuntimeConfigFile::ShowFps(false);  // off unless turned on
 #if defined(__APPLE__)
 bool g_metalFxSpatialUpscaling = RuntimeConfigFile::MetalFxSpatialUpscaling(false);
 #endif
@@ -204,14 +204,14 @@ bool IsHighFrameRateMode() {
 
 void SetResolutionScale(float scale) {
     g_resolutionScale = scale;
-    DisplaySettings::Settings settings = DisplaySettings::Current();
+    DisplaySettings::Settings settings = DisplaySettings::Latest();
     settings.renderScale = scale;
     DisplaySettings::Request(settings);
     RuntimeConfigFile::SetResolutionMultiplier(scale);
 }
 
 void SetAspectMode(int32_t mode) {
-    DisplaySettings::Settings settings = DisplaySettings::Current();
+    DisplaySettings::Settings settings = DisplaySettings::Latest();
     settings.aspect = mode;
     DisplaySettings::Request(settings);
     RuntimeConfigFile::SetAspectMode(mode);
@@ -1647,6 +1647,26 @@ void HandleEvents(const AuroraEvent* events) noexcept {
 void SetShowFps(bool show) noexcept {
     g_showFps = show;
     RuntimeConfigFile::SetShowFps(show);
+}
+
+bool ShowFps() noexcept {
+    return g_showFps;
+}
+
+void SetRenderScale(float scale) noexcept {
+    SetResolutionScale(scale);
+}
+
+float RenderScale() noexcept {
+    return g_resolutionScale;
+}
+
+void SetAspect(int32_t mode) noexcept {
+    SetAspectMode(mode);
+}
+
+int32_t Aspect() noexcept {
+    return DisplaySettings::Latest().aspect;
 }
 
 void ReleaseControllers() noexcept {

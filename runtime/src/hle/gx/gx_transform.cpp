@@ -2,6 +2,12 @@
 #include "isa/big_endian.h"
 #include "gx_internal.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
+#include <vector>
+
 namespace {
     static inline void SwapBeF32ArrayToHost(const uint32_t* srcBe, float* dst, size_t count) {
         const auto* bytes = reinterpret_cast<const uint8_t*>(srcBe);
@@ -117,6 +123,44 @@ PPC_NATIVE_OVERRIDE_VOID(801C9C60, GX__SetScissor_80173430, (uint32_t l, uint32_
 extern "C" void GX__SetProjection_8017301c(uint32_t ma, uint32_t pt) {
     const uint32_t* raw=(const uint32_t*)GuestToHostPtr(ma, 64); float m[16];
     SwapBeF32ArrayToHost(raw, m, 16);
+    // NSMBW_LOG_ORTHO: each distinct orthographic projection's extent (finding the 2D layer's), and
+    // each perspective one's aspect (x scale against y scale).
+    static const bool logOrtho = std::getenv("NSMBW_LOG_ORTHO") != nullptr;
+    if (logOrtho && pt == GX_PERSPECTIVE && m[0] != 0.f) {
+        static std::vector<int> seenAspects;
+        const int key = static_cast<int>(m[5] / m[0] * 1000.f);
+        if (std::find(seenAspects.begin(), seenAspects.end(), key) == seenAspects.end() && seenAspects.size() < 32) {
+            seenAspects.push_back(key);
+            const CpuContext* cpu = TryGetCpuContext();
+            uint32_t back = 0, ra = 0;
+            if (cpu != nullptr && Memory::TryRead32(cpu->gpr[1], back) && back != 0) {
+                Memory::TryRead32(back + 4, ra);
+            }
+            std::fprintf(stderr, "[gx] perspective aspect %.3f lr %08X %08X\n", m[5] / m[0], cpu ? cpu->lr : 0, ra);
+        }
+    }
+    if (logOrtho && pt == GX_ORTHOGRAPHIC && m[0] != 0.f && m[5] != 0.f) {
+        static std::vector<std::pair<int, int>> seen;
+        const std::pair<int, int> key{static_cast<int>(2.f / m[0]), static_cast<int>(2.f / m[5])};
+        if (std::find(seen.begin(), seen.end(), key) == seen.end() && seen.size() < 64) {
+            seen.push_back(key);
+            char chain[96] = {};
+            if (const CpuContext* cpu = TryGetCpuContext()) {
+                uint32_t sp = cpu->gpr[1];
+                int len = std::snprintf(chain, sizeof(chain), "lr %08X", cpu->lr);
+                for (int depth = 0; depth < 5 && sp != 0 && len < 80; ++depth) {
+                    uint32_t back = 0, ra = 0;
+                    if (!Memory::TryRead32(sp, back) || back == 0 || !Memory::TryRead32(back + 4, ra)) {
+                        break;
+                    }
+                    len += std::snprintf(chain + len, sizeof(chain) - len, " %08X", ra);
+                    sp = back;
+                }
+            }
+            std::fprintf(stderr, "[gx] ortho %d x %d (offset %.1f, %.1f) %s\n", key.first, key.second, -m[3] / m[0],
+                         -m[7] / m[5], chain);
+        }
+    }
     GXSetProjection(m, (GXProjectionType)pt);
     UpdateProjectionVectorFromMatrix(m, (GXProjectionType)pt);
 }
@@ -126,6 +170,46 @@ extern "C" void GX__SetProjectionv_80173080(uint32_t pa) {
     const uint32_t* raw=(const uint32_t*)GuestToHostPtr(pa, 28); float v[7];
     SwapBeF32ArrayToHost(raw, v, 7);
     GXProjectionType pt=(v[0]!=0.f)?GX_ORTHOGRAPHIC:GX_PERSPECTIVE;
+    static const bool logOrthoV = std::getenv("NSMBW_LOG_ORTHO") != nullptr;
+    if (logOrthoV && pt == GX_PERSPECTIVE && v[1] != 0.f) {
+        static std::vector<int> seenAspects;
+        const int key = static_cast<int>(v[3] / v[1] * 1000.f);
+        if (std::find(seenAspects.begin(), seenAspects.end(), key) == seenAspects.end() && seenAspects.size() < 32) {
+            seenAspects.push_back(key);
+            const CpuContext* cpu = TryGetCpuContext();
+            uint32_t chainSp = cpu ? cpu->gpr[1] : 0, ras[4] = {};
+            for (int d = 0; d < 4 && chainSp != 0; ++d) {
+                uint32_t back = 0;
+                if (!Memory::TryRead32(chainSp, back) || back == 0) break;
+                Memory::TryRead32(back + 4, ras[d]);
+                chainSp = back;
+            }
+            std::fprintf(stderr, "[gx] perspective aspect %.3f lr %08X %08X %08X %08X %08X\n", v[3] / v[1],
+                         cpu ? cpu->lr : 0, ras[0], ras[1], ras[2], ras[3]);
+        }
+    }
+    if (logOrthoV && pt == GX_ORTHOGRAPHIC && v[1] != 0.f && v[3] != 0.f) {
+        static std::vector<std::pair<int, int>> seen;
+        const std::pair<int, int> key{static_cast<int>(2.f / v[1]), static_cast<int>(2.f / v[3])};
+        if (std::find(seen.begin(), seen.end(), key) == seen.end() && seen.size() < 64) {
+            seen.push_back(key);
+            char chain[96] = {};
+            if (const CpuContext* cpu = TryGetCpuContext()) {
+                uint32_t sp = cpu->gpr[1];
+                int len = std::snprintf(chain, sizeof(chain), "lr %08X", cpu->lr);
+                for (int depth = 0; depth < 5 && sp != 0 && len < 80; ++depth) {
+                    uint32_t back = 0, ra = 0;
+                    if (!Memory::TryRead32(sp, back) || back == 0 || !Memory::TryRead32(back + 4, ra)) {
+                        break;
+                    }
+                    len += std::snprintf(chain + len, sizeof(chain) - len, " %08X", ra);
+                    sp = back;
+                }
+            }
+            std::fprintf(stderr, "[gx] orthov %d x %d (offset %.1f, %.1f) %s\n", key.first, key.second,
+                         -v[2] / v[1], -v[4] / v[3], chain);
+        }
+    }
     float m[16]={0.f}; m[0]=v[1]; m[5]=v[3]; m[10]=v[5]; m[11]=v[6];
     if(pt==GX_PERSPECTIVE){ m[2]=v[2]; m[6]=v[4]; m[14]=-1.f; } else { m[3]=v[2]; m[7]=v[4]; m[15]=1.f; }
     GXSetProjection(m, pt);

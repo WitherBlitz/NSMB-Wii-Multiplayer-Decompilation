@@ -97,6 +97,8 @@ struct RuntimeUserConfig {
     std::optional<bool> rumbleEnabled;
     std::optional<int32_t> muteHotkey;
     std::map<std::string, std::string> controllerExpressions;
+    // NSMBW: [keyboard] action = "comma-separated SDL scancode names" (keybinds.h).
+    std::map<std::string, std::string> keyboardBindings;
 };
 
 namespace RuntimeConfigFile {
@@ -310,7 +312,7 @@ inline void EnsureConfigFile() {
               "graphics_api = \"auto\"\n"
               "skip_unready_pipelines = true\n"
               "disable_copy_filter = true\n"
-              "show_fps = true\n"
+              "show_fps = false\n"
               "# Dolphin-style custom textures. When enabled, the renderer indexes\n"
               "# texture_replacements/ next to this file at startup and substitutes\n"
               "# any tex1_<W>x<H>_<hash>[_<tlut hash>]_<format>.dds or .png it finds\n"
@@ -427,6 +429,15 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         for (const auto& [key, value] : section->as_table()) {
             if (key.rfind("expr_", 0) == 0 && value.is_string()) {
                 config.controllerExpressions[key] = value.as_string();
+            }
+        }
+    }
+
+    if (const auto* section = document.contains("keyboard") ? &document.at("keyboard") : nullptr;
+        section != nullptr && section->is_table()) {
+        for (const auto& [key, value] : section->as_table()) {
+            if (value.is_string()) {
+                config.keyboardBindings[key] = value.as_string();
             }
         }
     }
@@ -723,6 +734,16 @@ inline std::string ControllerExpression(const std::string& key) {
 inline bool SetControllerExpression(const std::string& key, const std::string& value) {
     Mutable().controllerExpressions[key] = value;
     return WriteSetting("controller", key, FormatString(value));
+}
+
+inline std::string KeyboardBinding(const std::string& key) {
+    const auto it = Get().keyboardBindings.find(key);
+    return it == Get().keyboardBindings.end() ? std::string() : it->second;
+}
+
+inline bool SetKeyboardBinding(const std::string& key, const std::string& value) {
+    Mutable().keyboardBindings[key] = value;
+    return WriteSetting("keyboard", key, FormatString(value));
 }
 
 inline bool RumbleEnabled(bool fallback = true) {

@@ -35,8 +35,12 @@ void Request(const Settings& settings);
 void OnFrameBoundary(uint32_t surfaceWidth, uint32_t surfaceHeight);
 
 Settings Current();
+// Current() with any request not yet applied: what the next frame will use.
+Settings Latest();
 // What SCGetAspectRatio reports for the whole run.
 bool GameWidescreen();
+// The window (or screen) is wider than 16:9, so Fill shows more of the game than 16:9 does.
+bool SurfaceWide();
 // Render height for a scale (480 lines per 1x).
 float LinesForScale(float renderScale);
 

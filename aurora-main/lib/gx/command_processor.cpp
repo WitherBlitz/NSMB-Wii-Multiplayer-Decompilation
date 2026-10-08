@@ -14,6 +14,7 @@
 #include <tracy/Tracy.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -451,21 +452,38 @@ static void apply_xf_viewport() {
   });
 }
 
+// NSMBW: the screen's aspect while the game's view is widened past 16:9 (0 = off). See below.
+std::atomic<float> g_widePerspectiveAspect{0.0f};
+
 static void apply_xf_projection() {
   const auto& raw = g_gxState.xfProjection;
   auto& proj = g_gxState.proj;
   proj = {};
-  proj.m0[0] = raw[0];
+  // NSMBW: on a screen wider than 16:9 the picture fills it, so a camera set up for 16:9 would be
+  // stretched sideways. Re-derive its horizontal scale from the screen's aspect instead: the same
+  // vertical view, more to the sides (Hor+), around the same centre. Cameras already set up wider
+  // are left alone. That covers the perspective ones (world map, title) and the orthographic one
+  // the levels are drawn with; small orthographic views (render-to-texture work) are skipped.
+  float widen = 1.0f;
+  const float wide = g_widePerspectiveAspect.load(std::memory_order_relaxed);
+  if (wide > 0.0f && raw[0] != 0.0f && raw[2] != 0.0f) {
+    const float aspect = raw[2] / raw[0];
+    const bool screenSized = g_gxState.projType != GX_ORTHOGRAPHIC || 2.0f / raw[2] > 150.0f;
+    if (aspect > 1.68f && aspect < 1.88f && screenSized) {
+      widen = aspect / wide;
+    }
+  }
+  proj.m0[0] = raw[0] * widen;
   proj.m1[1] = raw[2];
   proj.m2[2] = raw[4];
   proj.m2[3] = raw[5];
 
   if (g_gxState.projType == GX_ORTHOGRAPHIC) {
-    proj.m0[3] = raw[1];
+    proj.m0[3] = raw[1] * widen;
     proj.m1[3] = raw[3];
     proj.m3[3] = 1.0f;
   } else {
-    proj.m0[2] = raw[1];
+    proj.m0[2] = raw[1] * widen;
     proj.m1[2] = raw[3];
     proj.m3[2] = -1.0f;
   }
@@ -2513,3 +2531,8 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
 }
 
 } // namespace aurora::gx::fifo
+
+// NSMBW: widen 16:9 perspective cameras to `aspect` (the screen's, when wider than 16:9; 0 = off).
+extern "C" void AuroraSetWidePerspectiveAspect(float aspect) {
+  aurora::gx::fifo::g_widePerspectiveAspect.store(aspect, std::memory_order_relaxed);
+}
