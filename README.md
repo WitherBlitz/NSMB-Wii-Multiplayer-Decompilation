@@ -74,7 +74,9 @@ Render at more than the console's 480 lines, on phones and on PC, or at exactly 
 resolution with **Match Screen Resolution**.
 
 **Settings gear.**
-The gear next to the Couch / LAN button on the save file screen opens the game's settings window.
+The gear next to the Couch / LAN button on the save file screen opens the game's settings window,
+and so does the gear at the top right while the world map's **+** menu or a level's pause menu is
+open (tap it, or click it on Windows).
 **Video:** Match Screen Resolution, the resolution multiplier (greyed out while matching the
 screen; on a wide screen each scale comes as "1x (480p)" with black bars or "1x Ultrawide" filling
 the screen) and Show FPS Counter (off by default). **Keybinds:** every keyboard control, each
@@ -140,10 +142,13 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest)
 page:
 
-- **Android:** `NSMBW-0.0.7-android-arm64.apk`. Open it on your phone and allow installing from that
+- **Android:** `NSMBW-0.0.8-android-arm64.apk`. Open it on your phone and allow installing from that
   app when Android asks. Updates install over it and keep your saves and game files.
-- **Windows:** `NSMBW-0.0.7-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
-  saves stay in the `UserData` folder next to it.
+- **Windows:** `NSMBW-0.0.8-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings
+  (including where your game files are), saves and caches live in `Documents\MarioWiiSaveData`, so a
+  new version, extracted anywhere, carries on where the last one left off. The first start of 0.0.8
+  takes over the data of an older version extracted in the same folder (or of the version it
+  replaces).
 
 > [!CAUTION]
 > Only take builds from this repository's
@@ -164,7 +169,7 @@ page:
 | C or Ctrl | Shake (spin, pick up) |
 | Q / E | Tilt left / right |
 | A | A |
-| Enter | + (pause) |
+| Enter or Esc | + (pause, the world map's menu) |
 | Minus or Tab | - |
 | F10 | Settings bar |
 
@@ -257,11 +262,11 @@ No, behaving like the real game is the goal. Only report things where this port 
 original game on a Wii or in Dolphin.
 
 **The game crashed or shows something wrong.**
-Open an issue with your device, what you did, and (on Windows) the log from `UserData\Logs` next to
-`NSMBW.exe`.
+Open an issue with your device, what you did, and (on Windows) the log from
+`Documents\MarioWiiSaveData\Logs`.
 
 **Is it done?**
-No, this is 0.0.7. It boots and plays on the tested devices, but not every level has been checked,
+No, this is 0.0.8. It boots and plays on the tested devices, but not every level has been checked,
 and rendering, performance and LAN play are still being worked on.
 
 ## AI usage
