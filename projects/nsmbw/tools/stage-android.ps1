@@ -30,9 +30,9 @@ Get-ChildItem -LiteralPath $BuildDirectory -Recurse -Filter '*.so' |
 $assets = Join-Path $NativeDirectory 'assets\runtime'
 if (Test-Path -LiteralPath $assets) { Remove-Item -LiteralPath $assets -Recurse -Force }
 New-Item -ItemType Directory -Force $assets | Out-Null
-# Not initial_pipeline_cache.db: the bundled seed is Mario Kart Wii's, and merging it would prewarm
-# hundreds of pipelines NSMBW never uses. NSMBW's own cache builds up on the phone as it plays.
-foreach ($file in 'dsp_coef.bin', 'cacert.pem') {
+# initial_pipeline_cache.db: NSMBW's pipelines (projects/nsmbw/tools/make_pipeline_seed.py), built
+# at the first launch so effects don't stutter the first time they appear.
+foreach ($file in 'dsp_coef.bin', 'cacert.pem', 'initial_pipeline_cache.db') {
     Copy-Item -LiteralPath (Join-Path $BuildDirectory $file) -Destination $assets
 }
 Copy-Item -LiteralPath (Join-Path $BuildDirectory 'wii_bootstrap') -Destination $assets -Recurse

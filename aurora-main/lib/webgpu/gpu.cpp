@@ -3,6 +3,7 @@
 #include <array>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1008,6 +1009,17 @@ void serialize_pipeline_caches() noexcept {
   if (performIdleTasks != nullptr) {
     performIdleTasks(&g_device);
   }
+#elif defined(WEBGPU_DAWN)
+  // NSMBW: Android links Dawn statically, so call it directly. Without this the monolithic
+  // VkPipelineCache was never written there and every launch recompiled every pipeline in the
+  // driver (773 pipelines, ~16 s on an Adreno 710) despite the blob cache hitting.
+  if (!g_device || g_backendType != wgpu::BackendType::Vulkan) {
+    return;
+  }
+  const auto start = std::chrono::steady_clock::now();
+  dawn::native::PerformIdleTasks(g_device);
+  Log.info("Saved the Vulkan pipeline cache in {} ms",
+           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
 #endif
 }
 
