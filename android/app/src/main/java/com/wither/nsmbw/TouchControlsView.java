@@ -70,6 +70,7 @@ final class TouchControlsView extends View {
     private Listener listener;
     private float opacity = 0.6f;
     private boolean controlsVisible = true;
+    private final android.util.SparseBooleanArray freeTaps = new android.util.SparseBooleanArray();
     private boolean menuMode;  // the game's menus are up: no remote, taps go to the game
     private boolean haptics = true;
     private final android.util.SparseArray<float[]> tapStarts = new android.util.SparseArray<>();
@@ -184,13 +185,17 @@ final class TouchControlsView extends View {
             final int id = e.getPointerId(i);
             final boolean openMenu = pointerModes.get(id, 0) == MODE_MENU && menuAt(e.getX(i), e.getY(i));
             final float[] start = tapStarts.get(id);
-            if (menuMode && pointerModes.get(id, 0) != MODE_MENU && start != null && listener != null
+            // Taps go to the game on its menus, and anywhere off the remote's buttons otherwise (the
+            // settings gear over the pause menus).
+            final boolean tappable = menuMode ? pointerModes.get(id, 0) != MODE_MENU : freeTaps.get(id, false);
+            if (tappable && start != null && listener != null
                     && Math.hypot(e.getX(i) - start[0], e.getY(i) - start[1]) < 0.06f * getHeight()
                     && e.getEventTime() - tapTimes.get(id) < 800 && getWidth() > 0 && getHeight() > 0) {
                 listener.onTap(e.getX(i) / getWidth(), e.getY(i) / getHeight());
             }
             tapStarts.remove(id);
             tapTimes.delete(id);
+            freeTaps.delete(id);
             pointerModes.delete(id);
             pointerBits.delete(id);
             if (openMenu && listener != null) {
@@ -215,6 +220,7 @@ final class TouchControlsView extends View {
         } else {
             pointerModes.put(id, MODE_BUTTONS);
             pointerBits.put(id, buttonsAt(x, y));
+            if (buttonsAt(x, y) == 0) freeTaps.put(id, true);
         }
     }
 
