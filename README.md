@@ -59,15 +59,26 @@ and comes back for the game.
 An on-screen sideways Wii Remote (D-pad, 1, 2, A, Shake, + and -) with adjustable opacity and
 vibration. Turn the phone like a steering wheel to tilt, jolt it to shake. Each can be turned off.
 
-**Any aspect ratio.**
-Original 4:3, 16:9, or Fill, which widens the view to fit your whole screen.
+**Any aspect ratio, ultrawide included.**
+Original 4:3, 16:9, or Fill, which widens the view to fit your whole screen. On screens wider
+than 16:9 (ultrawide monitors, most phones) the game really draws wider: levels, the world map and
+the menus show more to the sides instead of being stretched, and enemies appear at the real edges
+of your screen.
 
 **Native rendering via aurora.**
 The graphics layer is built on [aurora](https://github.com/encounter/aurora), a source-level
 GameCube & Wii compatibility layer, running on Vulkan (Android) or Direct3D 12 / Vulkan (Windows).
 
 **High internal resolution.**
-Render at more than the console's 480 lines, on phones and on PC.
+Render at more than the console's 480 lines, on phones and on PC, or at exactly your screen's own
+resolution with **Match Screen Resolution**.
+
+**Settings gear.**
+The gear next to the Couch / LAN button on the save file screen opens the game's settings window.
+**Video:** Match Screen Resolution, the resolution multiplier (greyed out while matching the
+screen; on a wide screen each scale comes as "1x (480p)" with black bars or "1x Ultrawide" filling
+the screen) and Show FPS Counter (off by default). **Keybinds:** every keyboard control, each
+changed by picking it and pressing the new key, with Reset Defaults.
 
 **In-game menus.**
 On Android, the ⋯ button opens Display (aspect ratio, render resolution, FPS counter, graphics
@@ -129,9 +140,9 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest)
 page:
 
-- **Android:** `NSMBW-0.0.6-android-arm64.apk`. Open it on your phone and allow installing from that
+- **Android:** `NSMBW-0.0.7-android-arm64.apk`. Open it on your phone and allow installing from that
   app when Android asks. Updates install over it and keep your saves and game files.
-- **Windows:** `NSMBW-0.0.6-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
+- **Windows:** `NSMBW-0.0.7-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings and
   saves stay in the `UserData` folder next to it.
 
 > [!CAUTION]
@@ -157,7 +168,8 @@ page:
 | Minus or Tab | - |
 | F10 | Settings bar |
 
-A game controller also works on Windows as a sideways Wii Remote.
+Every key can be changed in the gear's **Keybinds** tab on the save file screen. A game controller
+also works on Windows as a sideways Wii Remote (remap it under F10 > Controls).
 
 ## LAN and Tailscale multiplayer
 
@@ -249,7 +261,7 @@ Open an issue with your device, what you did, and (on Windows) the log from `Use
 `NSMBW.exe`.
 
 **Is it done?**
-No, this is 0.0.6. It boots and plays on the tested devices, but not every level has been checked,
+No, this is 0.0.7. It boots and plays on the tested devices, but not every level has been checked,
 and rendering, performance and LAN play are still being worked on.
 
 ## AI usage
