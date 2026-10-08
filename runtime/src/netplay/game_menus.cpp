@@ -118,6 +118,15 @@ int FileSelectCursor() {
     return static_cast<int>(cursor);
 }
 
+int FileSelectRawCursor() {
+    const uint32_t object = Find(kProfileFileSelect);
+    uint32_t cursor = 0;
+    if (object == 0 || !Memory::TryRead32(object + kFileSelectCursor, cursor)) {
+        return -1;
+    }
+    return static_cast<int>(cursor);
+}
+
 uint16_t CurrentScene() {
     uint32_t word = 0;
     return Memory::TryRead32(0x80428730u, word) ? static_cast<uint16_t>(word & 0xFFFFu) : 0;

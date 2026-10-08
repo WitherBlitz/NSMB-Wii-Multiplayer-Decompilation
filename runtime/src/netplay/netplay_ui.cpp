@@ -34,7 +34,8 @@ using Phase = NetplayLobby::Phase;
 constexpr uint32_t kLeft = 0x0001, kRight = 0x0002, kDown = 0x0004, kUp = 0x0008, kTwo = 0x0100, kOne = 0x0200,
                    kB = 0x0400, kA = 0x0800;
 
-enum class Screen { None, Mode, Lan, ChooseFile, Count, Rooms, Room, Message };
+// None is Couch, the game's own screens. Every other screen is part of LAN play.
+enum class Screen { None, Lan, ChooseFile, Count, Rooms, Room, Message };
 
 constexpr uint16_t kSceneGameSetup = 0x00A;  // the file select and "Select Players"
 
@@ -45,7 +46,8 @@ enum Event : uint32_t {
 struct Ui {
     Screen screen = Screen::None;
     int cursor = 0;
-    bool armed = true;           // show the mode menu the next time the file select comes up
+    bool toggleShown = false;    // the LAN / Couch toggle is on the file select right now
+    bool toggleFocus = false;    // the cursor is on it (moved up from the top file): the remote is ours
     uint32_t prevHold = 0;       // channel 1's buttons at the last read
     uint32_t events = 0;         // menu events since the last frame
     bool swallowConfirm = false; // keep a confirm press from the game until it is released
@@ -89,8 +91,7 @@ bool IsModal(Screen screen) {
 
 const char* ScreenName(Screen screen) {
     switch (screen) {
-    case Screen::None: return "none";
-    case Screen::Mode: return "LAN or Couch";
+    case Screen::None: return "couch";
     case Screen::Lan: return "Join or Create Room";
     case Screen::ChooseFile: return "room save file (game screen)";
     case Screen::Count: return "room size (game screen)";
@@ -236,12 +237,15 @@ std::string PlayerLine(uint8_t slot, const std::string& name, bool you) {
 }
 
 // ---------------------------------------------------------------- screens
-void DrawMode(const Canvas& c) {
-    Window(c, 322);
-    Title(c, "LAN or Couch?", 0, 112, 40);
-    Text(c, "Play on this device, or with other", 0, 40);
-    Text(c, "devices on your network?", 0, 5);
-    ButtonPair(c, "LAN", "Couch", 322, g_ui.cursor);
+// The LAN / Couch toggle in the empty right half of the file select's title bar: one of the game's
+// green buttons, reached by moving up from the top file. Couch is the game as it is; pressing it
+// switches to LAN (Join or Create Room), and back to Couch from any LAN step on the file select.
+constexpr float kToggleX = 228.0f, kToggleY = 192.0f, kToggleW = 176.0f;
+
+void DrawToggle(const Canvas& c) {
+    const bool lan = g_ui.screen != Screen::None;
+    Text(c, "Play:", kToggleX - kToggleW / 2 - 12, kToggleY, 24, 2, 0xFFFFFFFFu);
+    Button(c, lan ? "LAN" : "Couch", kToggleX, kToggleY, kToggleW, g_ui.toggleFocus, true, g_ui.frame);
 }
 
 void DrawLan(const Canvas& c) {
@@ -253,8 +257,8 @@ void DrawLan(const Canvas& c) {
 }
 
 // A hint over one of the game's own screens, in the empty right half of its title bar.
-void Banner(const Canvas& c, const std::string& text, uint32_t color = 0xFFFFFFFFu) {
-    const float x = 140.0f, y = 192.0f, halfWidth = 178.0f, halfHeight = 19.0f;
+void Banner(const Canvas& c, const std::string& text, uint32_t color = 0xFFFFFFFFu, float y = 192.0f) {
+    const float x = 140.0f, halfWidth = 178.0f, halfHeight = 19.0f;
     c.list->AddRectFilled(
         ImVec2(c.view.centerX + (x - halfWidth) * c.view.scale, c.view.centerY - (y + halfHeight) * c.view.scale),
         ImVec2(c.view.centerX + (x + halfWidth) * c.view.scale, c.view.centerY - (y - halfHeight) * c.view.scale),
@@ -263,7 +267,7 @@ void Banner(const Canvas& c, const std::string& text, uint32_t color = 0xFFFFFFF
 }
 
 void DrawChooseFileHint(const Canvas& c) {
-    Banner(c, "Pick the save for your room.");
+    Banner(c, "Pick the save for your room.", 0xFFFFFFFFu, 148.0f);  // under the toggle
 }
 
 void DrawCountHint(const Canvas& c) {
@@ -414,19 +418,13 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
     const bool left = ev & kEvLeft, right = ev & kEvRight, up = ev & kEvUp, down = ev & kEvDown;
     const bool confirm = ev & kEvConfirm, back = ev & kEvBack;
     switch (g_ui.screen) {
-    case Screen::Mode:
-        if (left || right) g_ui.cursor ^= 1;
-        if (confirm) {
-            if (g_ui.cursor == 0) {
-                Show(Screen::Lan);
-            } else {
-                Show(Screen::None);  // Couch: the game's own screen
-            }
-        }
-        break;
     case Screen::Lan:
         if (left || right) g_ui.cursor ^= 1;
-        if (back) Show(Screen::Mode);
+        if (back) {
+            // Back to Couch, with the cursor still on the toggle.
+            Show(Screen::None);
+            g_ui.toggleFocus = true;
+        }
         if (confirm) {
             if (g_ui.cursor == 0) {
                 NetplayLobby::Browse();
@@ -473,10 +471,9 @@ void HandleEvents(const NetplayLobby::Snapshot& lobby) {
             if (left || right) g_ui.cursor ^= 1;
             if (back || (confirm && g_ui.cursor == 1)) {
                 // Cancel: close the room and take the game back from "Select Players" to the file
-                // select, where LAN or Couch comes up again.
+                // select, in Couch.
                 NetplayLobby::Stop();
                 Show(Screen::None);
-                g_ui.armed = true;
                 g_ui.injectButtons = kOne;
                 g_ui.injectReads = 4;
             } else if (confirm && g_ui.cursor == 0 && lobby.members.size() >= 2) {
@@ -573,24 +570,38 @@ void Draw() {
         return;
     }
 
-    // The game's own setup screens decide when the menus come up and go away: LAN or Couch as the
-    // file select opens, once per visit to it from the title.
+    // The game's own setup screens decide when the toggle shows and the LAN steps go away.
     const uint16_t scene = GameMenus::CurrentScene();
     const bool fileWaiting = GameMenus::FileSelectWaiting();
     const GameMenus::SelectPlayers players = GameMenus::SelectPlayersState();
     if (scene != kSceneGameSetup) {
-        // Back to the title, or into the game: next time the file select opens, ask again.
-        if (g_ui.screen == Screen::Mode || g_ui.screen == Screen::Lan || g_ui.screen == Screen::ChooseFile ||
-            g_ui.screen == Screen::Count) {
+        // Back to the title, or into the game: the next file select starts in Couch.
+        if (g_ui.screen == Screen::Lan || g_ui.screen == Screen::ChooseFile || g_ui.screen == Screen::Count) {
             Show(Screen::None);
         }
-        if (g_ui.screen == Screen::None) {
-            g_ui.armed = true;
-        }
     }
-    if (fileWaiting && g_ui.armed && g_ui.screen == Screen::None) {
-        g_ui.armed = false;
-        Show(Screen::Mode);
+    // The LAN / Couch toggle: on the file select while it waits for a pick (also under LAN's windows).
+    g_ui.toggleShown = scene == kSceneGameSetup && fileWaiting && g_ui.screen != Screen::Count;
+    if (!g_ui.toggleShown) {
+        g_ui.toggleFocus = false;
+    }
+    if (g_ui.toggleFocus && !Modal()) {
+        const uint32_t ev = g_ui.events;
+        g_ui.events = 0;
+        if (ev & (kEvDown | kEvBack)) {
+            // Back down to the files; the press that left the toggle stays with us.
+            g_ui.toggleFocus = false;
+            g_ui.heldFromMenu = g_ui.prevHold;
+        } else if (ev & kEvConfirm) {
+            if (g_ui.screen == Screen::None) {
+                g_ui.toggleFocus = false;
+                Show(Screen::Lan);  // Couch -> LAN: Join or Create Room
+            } else {
+                NetplayLobby::Stop();
+                Show(Screen::None);  // LAN (picking the room's save) -> Couch
+                g_ui.heldFromMenu = g_ui.prevHold;
+            }
+        }
     }
     // Create Room: picking a file leads to the game's "Select Players", which sizes the room; Back
     // there returns to the file pick, and Free-for-All or Coin Battle leave room-making behind.
@@ -603,6 +614,11 @@ void Draw() {
         Show(Screen::None);
     }
     if (g_ui.screen == Screen::None) {
+        g_ui.events = 0;  // presses on the game's own screens are the game's
+        if (g_ui.toggleShown) {
+            ++g_ui.frame;
+            DrawToggle(Canvas{list, GameLayout::GameView(), 1.0f});
+        }
         return;
     }
 
@@ -629,16 +645,15 @@ void Draw() {
     GetAssets();
     ++g_ui.frame;
     Canvas c{list, GameLayout::GameView(), std::min(1.0f, g_ui.frame / 8.0f)};
+    if (g_ui.toggleShown) {
+        DrawToggle(Canvas{list, c.view, 1.0f});  // under LAN's windows and their veil
+    }
     switch (g_ui.screen) {
     case Screen::ChooseFile:
         DrawChooseFileHint(c);
         break;
     case Screen::Count:
         DrawCountHint(c);
-        break;
-    case Screen::Mode:
-        Veil(c);
-        DrawMode(c);
         break;
     case Screen::Lan:
         Veil(c);
@@ -679,10 +694,15 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         if (pressed & (kTwo | kA)) g_ui.events |= kEvConfirm;
         if (pressed & (kOne | kB)) g_ui.events |= kEvBack;
 
-        // Back on the first menu goes back in the game too (to the title): let the press through.
-        if (g_ui.screen == Screen::Mode && (pressed & kOne) != 0) {
-            Show(Screen::None);
-            return;
+        // Up from any of the three files (also in Create Room's file pick) moves onto the LAN /
+        // Couch toggle above them; the game never sees that press, so its cursor stays put.
+        const uint32_t screenUp = upright ? kUp : kRight;
+        const int fileCursor = GameMenus::FileSelectRawCursor();
+        if (g_ui.toggleShown && !g_ui.toggleFocus && !Modal() && (pressed & screenUp) != 0 && fileCursor >= 0 &&
+            fileCursor <= 2) {
+            g_ui.toggleFocus = true;
+            g_ui.events &= ~kEvUp;
+            g_ui.heldFromMenu |= screenUp;
         }
         // Create Room: the game's own screen picks the number; its confirm press is ours.
         if (g_ui.screen == Screen::Count && (pressed & (kTwo | kA)) != 0 &&
@@ -703,7 +723,7 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
             sample.hold |= g_ui.injectButtons;
         }
     }
-    if (Modal()) {
+    if (Modal() || g_ui.toggleFocus) {
         // The game sees the remote connected and at rest.
         sample.hold = 0;
         sample.stick[0] = sample.stick[1] = 0.0f;

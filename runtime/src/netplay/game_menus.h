@@ -23,6 +23,8 @@ int SelectPlayersCursor();
 // The file select: true while it waits for a pick; the highlighted file (0-2).
 bool FileSelectWaiting();
 int FileSelectCursor();
+// The file select's cursor as the game keeps it (0-2 the files, higher the buttons below), -1 if unknown.
+int FileSelectRawCursor();
 
 // dScene_c::m_nowScene (0x003 world map, 0x005 stage/title, 0x00A game setup, ...).
 uint16_t CurrentScene();

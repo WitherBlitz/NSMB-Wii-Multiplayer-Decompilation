@@ -327,6 +327,14 @@ endif()
 mkw_configure_product(WiiCompiled)
 target_precompile_headers(WiiCompiled PRIVATE
     "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
+if(MKW_PLATFORM_WINDOWS)
+    # The app icon (projects/nsmbw/tools/make_icons.ps1): Explorer, the taskbar and, through SDL's
+    # default of the executable's first icon, the game window.
+    enable_language(RC)
+    file(TO_CMAKE_PATH "${MKW_RUNTIME_SOURCE_DIR}/assets/icon/nsmbw.ico" MKW_APP_ICON)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc" "1 ICON \"${MKW_APP_ICON}\"\n")
+    target_sources(WiiCompiled PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc")
+endif()
 if(TARGET mkw_base_sensitive)
     target_sources(WiiCompiled PRIVATE $<TARGET_OBJECTS:mkw_base_sensitive>)
 endif()
