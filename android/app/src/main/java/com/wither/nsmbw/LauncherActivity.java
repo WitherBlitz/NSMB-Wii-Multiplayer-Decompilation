@@ -221,7 +221,7 @@ public final class LauncherActivity extends Activity {
         column.setOrientation(LinearLayout.VERTICAL);
         column.setPadding(dp(24), dp(16), dp(24), dp(16));
         section(column, "1. Import New Super Mario Bros. Wii", DOLPHIN_STEPS);
-        section(column, "2. Play", "Tap Play. For LAN play, choose LAN on the save file screen; "
+        section(column, "2. Play", "Tap Play. For LAN play, move up to the Couch button at the top right of the save file screen and switch it to LAN; "
                 + "every player imports their own game.");
         section(column, "Stuck on a step?", "The GitHub page covers the supported game, the steps above "
                 + "and common problems.");
