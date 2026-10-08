@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <cstdint>
 #include <vector>
 
@@ -35,5 +37,9 @@ std::vector<uint16_t> Profiles();
 
 // dScene_c::m_nowScene (0x003 world map, 0x005 stage/title, 0x00A game setup, ...).
 uint16_t CurrentScene();
+// The world map's + menu or a level's pause window is open, waiting for a choice.
+bool PauseMenuOpen();
+// NSMBW_DUMP_STATES debugging: the StateIDs held by the listed profiles' objects.
+std::string DumpStates();
 
 } // namespace GameMenus

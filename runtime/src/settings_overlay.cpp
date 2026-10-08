@@ -1628,13 +1628,13 @@ void HandleEvents(const AuroraEvent* events) noexcept {
             AudioBackend::Instance().SetMuted(g_audioMuted);
             RuntimeConfigFile::SetAudioMuted(g_audioMuted);
         }
+        // NSMBW: Escape is the game's + (its pause menus, Keybinds); here it only closes the F10 bar
+        // or the quit prompt.
         if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_ESCAPE)) {
             if (g_exitPromptOpen) {
                 g_exitPromptOpen = false;
             } else if (g_topBarVisible) {
                 SetTopBarVisible(false);
-            } else {
-                g_exitPromptOpen = true;
             }
             ApplyInputBlockState();
         }

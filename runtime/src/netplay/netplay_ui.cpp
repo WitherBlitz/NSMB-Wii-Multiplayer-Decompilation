@@ -45,6 +45,7 @@ enum class Screen { None, Lan, ChooseFile, Count, Rooms, Room, Message, Settings
 
 constexpr uint16_t kSceneBoot = 0x000;       // the strap screen ("Hold the Wii Remote sideways")
 constexpr uint16_t kSceneStage = 0x005;      // a course, or the title screen's
+constexpr uint16_t kSceneWorldMap = 0x003;
 constexpr uint16_t kSceneGameSetup = 0x00A;  // the file select and "Select Players"
 constexpr uint16_t kProfileOpeningTitle = 0x2BB;  // EVENT_OPENING_TITLE: only on the title screen
 
@@ -70,6 +71,8 @@ struct Ui {
     bool restarting = false;
     uint32_t injectButtons = 0;  // buttons the game is given for a few reads (a Back press)
     int injectReads = 0;
+    bool pauseGearShown = false;  // a pause menu is open: the settings gear sits at the top right
+    bool settingsFromPause = false;
 };
 
 Ui g_ui;
@@ -380,6 +383,19 @@ void Gear(const Canvas& c, float x, float y, float r) {
     c.list->AddCircle(centre, r * 0.62f * s, color, 24, r * 0.42f * s);
 }
 
+// The gear over the game's pause menus (the world map's + menu, a level's pause window): at the
+// screen's top right, under the FPS counter.
+constexpr float kPauseGearY = 120.0f;
+float PauseGearX(const GameLayout::View& view) {
+    return view.centerX / view.scale - 52.0f;
+}
+
+void DrawPauseGear(const Canvas& c) {
+    const float x = PauseGearX(c.view);
+    Button(c, "", x, kPauseGearY, kGearW, false, true, g_ui.frame);
+    Gear(c, x, kPauseGearY, 13.0f);
+}
+
 void DrawToggle(const Canvas& c) {
     const bool lan = g_ui.screen != Screen::None;
     Text(c, "Play:", kToggleX - kToggleW / 2 - 12, kToggleY, 24, 2, 0xFFFFFFFFu);
@@ -594,8 +610,12 @@ void DrawSettings(const Canvas& c) {
 }
 
 void CloseSettings() {
-    Show(Screen::None);  // back to the file select, the cursor on the gear
-    g_ui.toggleFocus = true;
+    Show(Screen::None);
+    if (g_ui.settingsFromPause) {
+        g_ui.settingsFromPause = false;  // back to the pause menu, as it was
+        return;
+    }
+    g_ui.toggleFocus = true;  // back to the file select, the cursor on the gear
     g_ui.topItem = 1;
 }
 
@@ -947,6 +967,11 @@ void TapAt(float lx, float ly, float gx, uint16_t scene, bool title) {
         PressToggle();
         return;
     }
+    if (g_ui.pauseGearShown && in(PauseGearX(GameLayout::GameView()), kPauseGearY, kGearW + 20, 72)) {
+        g_ui.settingsFromPause = true;
+        Show(Screen::Settings);
+        return;
+    }
     if (g_ui.toggleShown && g_ui.screen == Screen::None && in(kGearX, kGearY, kGearW + 16, 66)) {
         g_ui.toggleFocus = false;
         Show(Screen::Settings);
@@ -1175,6 +1200,14 @@ void ScriptedTaps() {
 
 void Draw() {
     DumpProfiles();
+    if (std::getenv("NSMBW_DUMP_STATES") != nullptr) {
+        static std::string lastStates;
+        std::string states = GameMenus::DumpStates();
+        if (states != lastStates) {
+            RT_LOGF(RT_TAG_RUNTIME, "states: %s\n", states.c_str());
+            lastStates = std::move(states);
+        }
+    }
     DumpLayouts();
     ScriptedTaps();
     ImDrawList* list = ImGui::GetBackgroundDrawList();
@@ -1230,6 +1263,12 @@ void Draw() {
                players == GameMenus::SelectPlayers::Other) {
         Show(Screen::None);
     }
+    // The pause menus' gear: looked for every few frames (walking the object tree is not free).
+    static int pauseCheck = 0;
+    if (++pauseCheck % 6 == 0) {
+        g_ui.pauseGearShown = (g_ui.screen == Screen::None || g_ui.settingsFromPause) &&
+                              (scene == kSceneWorldMap || scene == kSceneStage) && GameMenus::PauseMenuOpen();
+    }
     // Touch (the Android app's Tap) and mouse clicks on the menus.
     static int titleCheck = 0;
     static bool title = false;
@@ -1262,6 +1301,10 @@ void Draw() {
         if (g_ui.toggleShown) {
             ++g_ui.frame;
             DrawToggle(Canvas{list, GameLayout::GameView(), 1.0f});
+        }
+        if (g_ui.pauseGearShown) {
+            ++g_ui.frame;
+            DrawPauseGear(Canvas{list, GameLayout::GameView(), 1.0f});
         }
         return;
     }
@@ -1346,6 +1389,7 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         if (pressed & (upright ? kDown : kLeft)) g_ui.events |= kEvDown;
         if (pressed & (kTwo | kA)) g_ui.events |= kEvConfirm;
         if (pressed & (kOne | kB)) g_ui.events |= kEvBack;
+        if ((pressed & kPlus) && g_ui.screen == Screen::Settings) g_ui.events |= kEvBack;  // Esc / + closes it
 
         // Up from any of the three files (also in Create Room's file pick) moves onto the LAN /
         // Couch toggle above them; the game never sees that press, so its cursor stays put.

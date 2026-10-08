@@ -232,6 +232,15 @@ inline std::optional<std::filesystem::path> ExecutableDirectory() {
 #endif
 }
 
+// NSMBW: the Windows downloads up to 0.0.7 shipped this marker; such a folder is an old release,
+// whose UserData moves to Documents\MarioWiiSaveData (AdoptEarlierUserData), not a portable root.
+inline bool IsReleasedNsmbwMarker(const std::filesystem::path& marker) {
+    std::ifstream input(marker);
+    std::string line;
+    std::getline(input, line);
+    return line.rfind("Keep this file: settings, saves and caches stay in the UserData", 0) == 0;
+}
+
 // The portable root this executable lives under, or nullopt for a normal installation. The answer
 // cannot change while the process runs, so it is resolved exactly once: every user-state path
 // derives from it and they must not disagree with each other.
@@ -244,7 +253,8 @@ inline const std::optional<std::filesystem::path>& PortableRootDirectory() {
         std::filesystem::path current = *executableDirectory;
         for (int level = 0; level <= kPortableSearchDepth; ++level) {
             std::error_code ec;
-            if (std::filesystem::is_regular_file(current / kPortableMarkerFileName, ec)) {
+            if (std::filesystem::is_regular_file(current / kPortableMarkerFileName, ec) &&
+                !IsReleasedNsmbwMarker(current / kPortableMarkerFileName)) {
                 return current;
             }
             const auto parent = current.parent_path();
@@ -258,11 +268,80 @@ inline const std::optional<std::filesystem::path>& PortableRootDirectory() {
     return root;
 }
 
+#ifdef _WIN32
+// NSMBW: on Windows the settings (with the game folder), saves and caches live in
+// Documents\MarioWiiSaveData, so a new version extracted anywhere carries on where the last left off.
+inline constexpr const wchar_t* kDocumentsDataDirectoryName = L"MarioWiiSaveData";
+
+// The first start with an empty MarioWiiSaveData takes over the newest earlier data: a portable
+// UserData beside this executable or beside another version's NSMBW.exe in the folder above it
+// (each release extracts to its own NSMBW-x.y.z-windows-x64 folder), or %LOCALAPPDATA%\WiiCompiled.
+// Logs stay behind.
+inline void AdoptEarlierUserData(const std::filesystem::path& target) {
+    std::error_code ec;
+    if (std::filesystem::exists(target / kConfigFileName, ec)) {
+        return;
+    }
+    std::vector<std::filesystem::path> candidates;
+    if (const auto executableDirectory = ExecutableDirectory()) {
+        candidates.push_back(*executableDirectory / kPortableUserDataDirectoryName);
+        const auto parent = executableDirectory->parent_path();
+        for (std::filesystem::directory_iterator it(parent, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->is_directory(ec) && it->path() != *executableDirectory) {
+                candidates.push_back(it->path() / kPortableUserDataDirectoryName);
+            }
+        }
+    }
+    PWSTR localPath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localPath)) && localPath) {
+        candidates.push_back(std::filesystem::path(localPath) / kApplicationDirectoryName);
+        CoTaskMemFree(localPath);
+    }
+    std::optional<std::filesystem::path> newest;
+    std::filesystem::file_time_type newestTime{};
+    for (const auto& candidate : candidates) {
+        std::error_code timeError;
+        const auto time = std::filesystem::last_write_time(candidate / kConfigFileName, timeError);
+        if (!timeError && (!newest || time > newestTime)) {
+            newest = candidate;
+            newestTime = time;
+        }
+    }
+    if (!newest) {
+        return;
+    }
+    std::filesystem::create_directories(target, ec);
+    for (std::filesystem::directory_iterator it(*newest, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename() == "Logs") {
+            continue;
+        }
+        std::error_code copyError;
+        std::filesystem::copy(it->path(), target / it->path().filename(),
+                              std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing,
+                              copyError);
+    }
+}
+#endif
+
 inline std::filesystem::path ApplicationDataDirectory() {
     if (const auto& portableRoot = PortableRootDirectory()) {
         return *portableRoot / kPortableUserDataDirectoryName;
     }
 #ifdef _WIN32
+    static const std::optional<std::filesystem::path> documents = []() -> std::optional<std::filesystem::path> {
+        PWSTR documentsPath = nullptr;
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_CREATE, nullptr, &documentsPath)) ||
+            documentsPath == nullptr) {
+            return std::nullopt;
+        }
+        const std::filesystem::path directory = std::filesystem::path(documentsPath) / kDocumentsDataDirectoryName;
+        CoTaskMemFree(documentsPath);
+        AdoptEarlierUserData(directory);
+        return directory;
+    }();
+    if (documents) {
+        return *documents;
+    }
     PWSTR rawPath = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &rawPath)) && rawPath) {
         const std::filesystem::path directory = std::filesystem::path(rawPath) / kApplicationDirectoryName;

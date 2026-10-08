@@ -30,7 +30,7 @@ const std::array<Default, kActionCount>& Defaults() {
         {"shake", "Shake (Spin)", {SDL_SCANCODE_C, SDL_SCANCODE_LCTRL}},
         {"tilt_left", "Tilt Left", {SDL_SCANCODE_Q}},
         {"tilt_right", "Tilt Right", {SDL_SCANCODE_E}},
-        {"plus", "+ (Pause)", {SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER}},
+        {"plus", "+ (Pause)", {SDL_SCANCODE_RETURN, SDL_SCANCODE_ESCAPE}},
         {"minus", "- (Minus)", {SDL_SCANCODE_MINUS, SDL_SCANCODE_TAB}},
     }};
     return defaults;
