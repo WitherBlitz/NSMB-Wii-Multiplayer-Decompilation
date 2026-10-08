@@ -82,13 +82,14 @@ screen; on a wide screen each scale comes as "1x (480p)" with black bars or "1x 
 the screen) and Show FPS Counter (off by default). **Keybinds:** every keyboard control, each
 changed by picking it and pressing the new key, with Reset Defaults.
 
-**In-game menus.**
-On Android, the ⋯ button opens Display (aspect ratio, render resolution, FPS counter, graphics
-compatibility), Controls, Leave LAN Game and Quit. On Windows, press **F10** for the settings bar.
-Everything you change is saved and restored next launch.
+**Settings.**
+On Android, **Settings** on the start menu holds Display (aspect ratio, render resolution, FPS
+counter, graphics compatibility) and Controls; in the game, the phone's Back gesture offers Start
+Menu, Leave LAN Game and Quit. On Windows, press **F10** for the settings bar. Everything you
+change is saved and restored next launch.
 
 **Skip Start Menu.**
-On Android, the app can open straight into the game; the ⋯ menu's **Start Menu** brings you back.
+On Android, the app can open straight into the game; Back > **Start Menu** brings you back.
 
 ## Tested devices
 
@@ -142,12 +143,12 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest)
 page:
 
-- **Android:** `NSMBW-0.0.8-android-arm64.apk`. Open it on your phone and allow installing from that
+- **Android:** `NSMBW-0.0.9-android-arm64.apk`. Open it on your phone and allow installing from that
   app when Android asks. Updates install over it and keep your saves and game files.
-- **Windows:** `NSMBW-0.0.8-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings
+- **Windows:** `NSMBW-0.0.9-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings
   (including where your game files are), saves and caches live in `Documents\MarioWiiSaveData`, so a
-  new version, extracted anywhere, carries on where the last one left off. The first start of 0.0.8
-  takes over the data of an older version extracted in the same folder (or of the version it
+  new version, extracted anywhere, carries on where the last one left off. The first start of 0.0.8 or
+  later takes over the data of an older version extracted in the same folder (or of the version it
   replaces).
 
 > [!CAUTION]
@@ -157,7 +158,8 @@ page:
 
 ## Controls
 
-**Android:** the on-screen remote, tilt and shake, all adjustable under ⋯ > Controls.
+**Android:** the on-screen remote, tilt and shake, all adjustable under Settings > Controls on the
+start menu.
 
 **Windows** (a Wii Remote held sideways):
 
@@ -203,7 +205,7 @@ friends). Tailscale can't broadcast, so the game finds rooms there like this:
   **pass them on**: once any device has seen another, every game device on the tailnet learns it.
 - To find another **phone** the very first time with no PC around, add its Tailscale name (as shown
   in the Tailscale app, e.g. `s26-ultra`) or its 100.x address under **Tailscale & LAN Devices**:
-  on the start menu or the in-game ⋯ menu on Android, or **F10 > LAN Play** on Windows. Those
+  on the start menu on Android, or **F10 > LAN Play** on Windows. Those
   screens also show the device's own addresses to tell others. Only one of the two needs to add the
   other.
 
@@ -266,7 +268,7 @@ Open an issue with your device, what you did, and (on Windows) the log from
 `Documents\MarioWiiSaveData\Logs`.
 
 **Is it done?**
-No, this is 0.0.8. It boots and plays on the tested devices, but not every level has been checked,
+No, this is 0.0.9. It boots and plays on the tested devices, but not every level has been checked,
 and rendering, performance and LAN play are still being worked on.
 
 ## AI usage
