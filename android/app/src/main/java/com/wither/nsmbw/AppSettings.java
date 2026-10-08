@@ -14,8 +14,8 @@ final class AppSettings {
     static final int GPU_COMPAT_ON = 1;
     static final int GPU_COMPAT_OFF = 2;
 
-    /** Render scales offered in the menu; 1x renders 480 lines, whatever the aspect. */
-    static final float[] RESOLUTION_SCALES = {0.5f, 0.75f, 1f, 2f, 3f, 4f};
+    /** Render scales offered in the menu; 1x renders 480 lines, whatever the aspect; 0 the screen's own. */
+    static final float[] RESOLUTION_SCALES = {0f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f};
 
     private static final String FILE = "settings";
     private final SharedPreferences prefs;
@@ -59,6 +59,7 @@ final class AppSettings {
 
     /** "2× (960p)": the scale and the number of lines it renders, as the menu shows it. */
     static String resolutionLabel(float scale) {
+        if (scale <= 0f) return "Match screen";
         final String factor = scale == Math.rint(scale)
                 ? String.valueOf((int) scale) : String.valueOf(scale);
         return factor + "× (" + Math.round(480 * scale) + "p)";

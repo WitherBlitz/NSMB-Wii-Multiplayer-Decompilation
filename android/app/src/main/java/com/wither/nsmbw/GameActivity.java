@@ -45,6 +45,8 @@ public final class GameActivity extends SDLActivity
     static native void nativeTap(float x, float y);
     /** Whether a menu that taps drive is up (the remote is hidden then). */
     static native boolean nativeTapScreen();
+    /** {render scale, show FPS, aspect} after the game's own settings window changed them, else null. */
+    static native float[] nativeTakeSettings();
 
     private WifiManager.MulticastLock multicastLock;
 
@@ -107,6 +109,15 @@ public final class GameActivity extends SDLActivity
         @Override
         public void run() {
             final long now = android.os.SystemClock.uptimeMillis();
+            if (nativeReady) {
+                // The game's settings window: keep its choices, the config is rewritten at each start.
+                final float[] changed = nativeTakeSettings();
+                if (changed != null) {
+                    settings.setResolutionScale(changed[0]);
+                    settings.setShowFps(changed[1] > 0.5f);
+                    if (changed.length > 2) settings.setAspectMode(Math.round(changed[2]));
+                }
+            }
             if (nativeReady && nativeTapScreen()) {
                 lastTapScreen = now;
                 touch.setMenuMode(true);
@@ -391,8 +402,15 @@ public final class GameActivity extends SDLActivity
         final float[] scales = AppSettings.RESOLUTION_SCALES;
         final String[] labels = new String[scales.length];
         final float aspect = renderAspect();
-        int selected = 2;
+        int selected = 3;
         for (int i = 0; i < scales.length; ++i) {
+            if (scales[i] <= 0f) {
+                final android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+                labels[i] = AppSettings.resolutionLabel(0f) + "  ·  " + Math.max(m.widthPixels, m.heightPixels)
+                        + "×" + Math.min(m.widthPixels, m.heightPixels);
+                if (settings.resolutionScale() <= 0f) selected = i;
+                continue;
+            }
             final int lines = Math.round(480 * scales[i]);
             labels[i] = AppSettings.resolutionLabel(scales[i]) + "  ·  " + Math.round(lines * aspect) + "×" + lines;
             if (Math.abs(scales[i] - settings.resolutionScale()) < 0.01f) selected = i;
