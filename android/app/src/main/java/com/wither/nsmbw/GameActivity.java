@@ -41,6 +41,10 @@ public final class GameActivity extends SDLActivity
     /** Whether this run is a LAN session, and leaving one (the host keeps the session's save). */
     static native boolean nativeSessionActive();
     static native void nativePrepareToLeave();
+    /** A tap on the game's menus, as fractions of the screen. */
+    static native void nativeTap(float x, float y);
+    /** Whether a menu that taps drive is up (the remote is hidden then). */
+    static native boolean nativeTapScreen();
 
     private WifiManager.MulticastLock multicastLock;
 
@@ -95,9 +99,34 @@ public final class GameActivity extends SDLActivity
         return new String[] {"main"};
     }
 
+    // The game's menus take taps and the remote hides while they are up; it comes back a moment
+    // after they go, so it doesn't blink while one menu screen hands over to the next.
+    private final android.os.Handler menuPoll = new android.os.Handler(android.os.Looper.getMainLooper());
+    private long lastTapScreen;
+    private final Runnable pollMenu = new Runnable() {
+        @Override
+        public void run() {
+            final long now = android.os.SystemClock.uptimeMillis();
+            if (nativeReady && nativeTapScreen()) {
+                lastTapScreen = now;
+                touch.setMenuMode(true);
+            } else if (now - lastTapScreen > 600) {
+                touch.setMenuMode(false);
+            }
+            menuPoll.postDelayed(this, 100);
+        }
+    };
+
+    @Override
+    public void onTap(float x, float y) {
+        if (nativeReady) nativeTap(x, y);
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
+        menuPoll.removeCallbacks(pollMenu);
+        menuPoll.post(pollMenu);
         hideSystemBars();
         if (motion != null) {
             motion.start(settings.motionTilt(), settings.motionShake());
@@ -106,6 +135,7 @@ public final class GameActivity extends SDLActivity
 
     @Override
     protected void onPause() {
+        menuPoll.removeCallbacks(pollMenu);
         if (motion != null) motion.stop();
         if (touch != null) touch.release();
         super.onPause();

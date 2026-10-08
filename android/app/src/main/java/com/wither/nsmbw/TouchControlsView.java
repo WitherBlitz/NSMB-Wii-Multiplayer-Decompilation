@@ -42,6 +42,8 @@ final class TouchControlsView extends View {
     interface Listener {
         void onTouchInput(int buttons, boolean shake);
         void onMenu();
+        /** A tap on the game while its menus are up (menu mode), as fractions of the view. */
+        void onTap(float x, float y);
     }
 
     private static final class Button {
@@ -68,7 +70,10 @@ final class TouchControlsView extends View {
     private Listener listener;
     private float opacity = 0.6f;
     private boolean controlsVisible = true;
+    private boolean menuMode;  // the game's menus are up: no remote, taps go to the game
     private boolean haptics = true;
+    private final android.util.SparseArray<float[]> tapStarts = new android.util.SparseArray<>();
+    private final android.util.SparseLongArray tapTimes = new android.util.SparseLongArray();
 
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -96,6 +101,19 @@ final class TouchControlsView extends View {
         release();
         invalidate();
     }
+
+    /**
+     * Menu mode, while the game's own menus are up (title, file select, player count, LAN menus):
+     * the remote is hidden apart from the menu button, and a tap on the game is passed on as one.
+     */
+    void setMenuMode(boolean on) {
+        if (menuMode == on) return;
+        menuMode = on;
+        release();
+        invalidate();
+    }
+
+    private boolean showsControls() { return controlsVisible && !menuMode; }
 
     /** Lets go of everything, e.g. when the app loses focus or a menu opens. */
     void release() {
@@ -154,6 +172,8 @@ final class TouchControlsView extends View {
         }
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             final int i = e.getActionIndex();
+            tapStarts.put(e.getPointerId(i), new float[] {e.getX(i), e.getY(i)});
+            tapTimes.put(e.getPointerId(i), e.getEventTime());
             press(e.getPointerId(i), e.getX(i), e.getY(i));
         } else if (action == MotionEvent.ACTION_MOVE) {
             for (int i = 0; i < e.getPointerCount(); ++i) {
@@ -163,6 +183,14 @@ final class TouchControlsView extends View {
             final int i = e.getActionIndex();
             final int id = e.getPointerId(i);
             final boolean openMenu = pointerModes.get(id, 0) == MODE_MENU && menuAt(e.getX(i), e.getY(i));
+            final float[] start = tapStarts.get(id);
+            if (menuMode && pointerModes.get(id, 0) != MODE_MENU && start != null && listener != null
+                    && Math.hypot(e.getX(i) - start[0], e.getY(i) - start[1]) < 0.06f * getHeight()
+                    && e.getEventTime() - tapTimes.get(id) < 800 && getWidth() > 0 && getHeight() > 0) {
+                listener.onTap(e.getX(i) / getWidth(), e.getY(i) / getHeight());
+            }
+            tapStarts.remove(id);
+            tapTimes.delete(id);
             pointerModes.delete(id);
             pointerBits.delete(id);
             if (openMenu && listener != null) {
@@ -207,7 +235,7 @@ final class TouchControlsView extends View {
     }
 
     private boolean onPad(float x, float y) {
-        if (!controlsVisible) return false;
+        if (!showsControls()) return false;
         final float dx = x - padX, dy = y - padY, reach = padR * 1.26f;
         return dx * dx + dy * dy <= reach * reach;
     }
@@ -221,7 +249,7 @@ final class TouchControlsView extends View {
 
     /** Every button under the point (1 and 2 overlap on their seam); never the menu. */
     private int buttonsAt(float x, float y) {
-        if (!controlsVisible) return 0;
+        if (!showsControls()) return 0;
         int bits = 0;
         for (Button b : buttons) {
             if (b.bit != MENU && b.hit(x, y)) bits |= b.bit;
@@ -256,11 +284,11 @@ final class TouchControlsView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         final int base = Math.round(255 * opacity);
-        if (controlsVisible) {
+        if (showsControls()) {
             drawPad(canvas, base);
         }
         for (Button b : buttons) {
-            if (!controlsVisible && b.bit != MENU) continue;
+            if (!showsControls() && b.bit != MENU) continue;
             final boolean down = (held & b.bit) != 0;
             fill.setColor(Color.argb(down ? base * 3 / 4 : base / 3, 255, 255, 255));
             canvas.drawCircle(b.x, b.y, b.r, fill);
