@@ -986,6 +986,22 @@ void TapAt(float lx, float ly, float gx, uint16_t scene, bool title) {
         StartNav(NavKind::Press, static_cast<int>(kTwo | kA));  // the strap screen, "Press 2 to Start"
         return;
     }
+    // The world map's button hints, anchored to the screen's corners: tapping one presses its button.
+    if (scene == kSceneWorldMap && !GameMenus::PauseMenuOpen()) {
+        const float right = GameLayout::GameView().centerX / GameLayout::GameView().scale;
+        const auto band = [&](float x0, float x1, float y0, float y1) {
+            return lx >= x0 && lx <= x1 && ly >= y0 && ly <= y1;
+        };
+        uint32_t press = 0;
+        if (band(right - 150, right - 25, 160, 202)) press = kPlus;            // Menu (+)
+        else if (band(right - 250, right - 25, 122, 164)) press = kMinus;      // Select World (-)
+        else if (band(-right + 25, -right + 210, -200, -152)) press = kA;      // View Map (A)
+        else if (band(right - 160, right - 25, -200, -152)) press = kOne;      // Items (1)
+        if (press != 0) {
+            StartNav(NavKind::Press, static_cast<int>(press));
+        }
+        return;
+    }
     if (scene != kSceneGameSetup) {
         return;
     }

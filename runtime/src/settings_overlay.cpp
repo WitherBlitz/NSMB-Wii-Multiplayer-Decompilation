@@ -1306,9 +1306,7 @@ void DrawStartupScreen() {
         // the game can start), else in the overlay's font.
         constexpr const char* kTitle = "Made by WitherBlitz";
         constexpr const char* kCredit =
-            "Code from WiiCompiled used and modified by an LLM to make this port possible. Essentially "
-            "wasn't made by me at this point, I just know how to use a keyboard and have enough dedication "
-            "for this game I grew up with to make it work on my phone.";
+            "Code from WiiCompiled used and modified by an LLM to make this port possible.";
         static const std::shared_ptr<GameLayout::Font> titleFont = GameLayout::LoadFont("mj2d01_marioFont_64_IA4.brfnt");
         static const std::shared_ptr<GameLayout::Font> bodyFont = GameLayout::LoadFont("mj2d00_MessageFont_32_I4.brfnt");
         float startY = 0.0f;
@@ -1617,6 +1615,16 @@ void HandleEvents(const AuroraEvent* events) noexcept {
                                 IsToggleKey(ev->sdl, SDL_SCANCODE_DELETE))) {
             CompleteRebind(g_rebind.kind == RebindKind::Controller ? PAD_NATIVE_BUTTON_DISABLED
                                                                   : static_cast<uint32_t>(PAD_KEY_INVALID));
+        }
+        // NSMBW: F11 toggles between a window and borderless fullscreen (saved like the F10 bar's
+        // Display mode).
+        if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_F11)) {
+            const AuroraDisplayMode mode = aurora_get_display_mode() == AURORA_DISPLAY_MODE_WINDOWED
+                                               ? AURORA_DISPLAY_MODE_BORDERLESS
+                                               : AURORA_DISPLAY_MODE_WINDOWED;
+            aurora_set_display_mode(mode);
+            g_displayMode = static_cast<int>(aurora_get_display_mode());
+            RuntimeConfigFile::SetDisplayMode(std::string(kDisplayModeConfigNames[static_cast<size_t>(g_displayMode)]));
         }
         if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_F10)) {
             SetTopBarVisible(!g_topBarVisible);
