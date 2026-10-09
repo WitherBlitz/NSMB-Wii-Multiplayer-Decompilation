@@ -16,6 +16,9 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
+#include <map>
+#include <functional>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -71,7 +74,8 @@ struct Ui {
     bool restarting = false;
     uint32_t injectButtons = 0;  // buttons the game is given for a few reads (a Back press)
     int injectReads = 0;
-    bool pauseGearShown = false;  // a pause menu is open: the settings gear sits at the top right
+    bool pauseGearShown = false;  // a level's pause menu is open: the settings gear sits at the top right
+    bool menuSettingsShown = false;  // the world map's + menu is open: our Settings button is in it
     bool settingsFromPause = false;
 };
 
@@ -100,7 +104,7 @@ std::atomic<bool> g_tapScreen{false};
 // A tap on the game's own screens is played back as remote presses on channel 1: one press, or
 // D-pad steps toward a cursor position (checked against the game's cursor before each) and then
 // 2 to pick it.
-enum class NavKind { None, Press, File, Players };
+enum class NavKind { None, Press, File, Players, Cursor };
 struct Nav {
     NavKind kind = NavKind::None;
     int target = 0;           // the cursor position, or for Press the buttons
@@ -108,18 +112,47 @@ struct Nav {
     int reads = 0;
     int steps = 0;
     bool confirming = false;
+    // Cursor: the point to bring SELECT_CURSOR to, in its layout's units, and how the last step went.
+    float px = 0, py = 0;
+    float lastCx = 1e9f, lastCy = 1e9f;
+    uint32_t lastDir = 0;
+    int stuck = 0;
 };
 Nav g_nav;
 
+bool InGuestRam(uint32_t a);
+std::string LivePaneName(uint32_t pane);
+void WalkPanes(uint32_t pane, int depth, const std::function<void(uint32_t)>& visit);
+struct CursorRect;
+CursorRect GameCursorRect();
+bool CursorStep(Nav& n, uint32_t& button);
+
+
 void StartNav(NavKind kind, int target) {
-    static const char* const kKinds[] = {"none", "press", "file select", "select players"};
+    static const char* const kKinds[] = {"none", "press", "file select", "select players", "menu cursor"};
     RT_LOGF(RT_TAG_RUNTIME, "tap: %s 0x%X\n", kKinds[static_cast<int>(kind)], target);
     g_nav = Nav{};
     g_nav.kind = kind;
     g_nav.target = target;
 }
 
+void StartCursorNav(float x, float y) {
+    StartNav(NavKind::Cursor, 0);
+    // The cursor's layout is drawn with x squeezed by d2d::Multi_c's 608/width factor (the constant
+    // display_settings.cpp keeps in step with the canvas): its global matrices carry that factor.
+    const float squeeze = Memory::ReadFloat32(0x8042B084u);
+    g_nav.px = x * (squeeze > 0.1f && squeeze < 2.0f ? squeeze : 1.0f);
+    g_nav.py = y;
+}
+
 uint32_t NextNavButton(Nav& n) {
+    if (n.kind == NavKind::Cursor) {
+        uint32_t button = 0;
+        if (!CursorStep(n, button)) {
+            n.kind = NavKind::None;
+        }
+        return button;
+    }
     if (n.kind == NavKind::Press) {
         if (n.steps++ == 0) {
             return static_cast<uint32_t>(n.target);
@@ -396,6 +429,358 @@ void DrawPauseGear(const Canvas& c) {
     Gear(c, x, kPauseGearY, 13.0f);
 }
 
+// ---------------------------------------------------------------- the world map's + menu: Settings
+// A fourth button, "Settings", under Quick Save in the world map's + menu. The game's own layout
+// (corseSelectMenu.arc, its panes live in guest memory) is edited every frame to make room: the
+// window grows by kMenuGrow units, the first three buttons move up by kMenuRaise and Title Screen
+// (with its separator and dark band) down by kMenuLower, and "Back (1)" drops below the taller
+// window. The button itself is drawn here in the game's button style; the controller reaches it
+// down from Quick Save or up from Title Screen, and taps or clicks work on it and on Back.
+constexpr float kMenuGrow = 65.0f, kMenuRaise = 32.0f, kMenuLower = -33.0f, kMenuBackDrop = -29.0f;
+constexpr float kMenuSettingsY = -22.0f + kMenuRaise - 65.0f;  // one button pitch under Quick Save
+constexpr float kMenuBackX = 189.0f, kMenuBackY = -183.0f + kMenuBackDrop;
+
+// nw4r::lyt::Pane: mpParent +0xC, child list +0x10 (size, then the terminator node {next, prev}),
+// each child linked through its node at +4, mTranslate +0x2C, mSize +0x4C, mFlag +0xBB (bit 0:
+// visible), mName +0xBC.
+struct LivePane {
+    uint32_t addr = 0;
+    uint32_t parent = 0;
+    float y = 0.0f;
+    float h = 0.0f;
+};
+struct MenuLayout {
+    uint32_t object = 0;
+    std::map<std::string, LivePane> panes;
+    std::map<uint32_t, std::string> names;
+};
+MenuLayout g_menuLayout;
+std::atomic<bool> g_menuFocus{false};  // "Settings" holds the menu's cursor
+int g_menuFocusFrom = 2;               // the game's own cursor meanwhile: Quick Save or Title Screen
+std::atomic<bool> g_menuOpenSettings{false};
+
+bool InGuestRam(uint32_t a) {
+    return (a >= 0x80000000u && a < 0x81800000u) || (a >= 0x90000000u && a < 0x94000000u);
+}
+
+std::string LivePaneName(uint32_t pane) {
+    std::string name;
+    for (uint32_t i = 0; i < 17; ++i) {
+        uint32_t word = 0;
+        if (!Memory::TryRead32((pane + 0xBC + i) & ~3u, word)) {
+            return {};
+        }
+        const char ch = static_cast<char>(word >> (24 - 8 * ((pane + 0xBC + i) & 3u)));
+        if (ch == 0) {
+            break;
+        }
+        name += ch;
+    }
+    return name;
+}
+
+// The root pane of the layout an object embeds: the first pointer in it to a pane named RootPane.
+uint32_t FindRootPane(uint32_t object) {
+    for (uint32_t off = 0; object != 0 && off < 0x800; off += 4) {
+        uint32_t p = 0;
+        if (Memory::TryRead32(object + off, p) && InGuestRam(p) && LivePaneName(p) == "RootPane") {
+            return p;
+        }
+    }
+    return 0;
+}
+
+void WalkPanes(uint32_t pane, int depth, const std::function<void(uint32_t)>& visit) {
+    if (depth > 12) {
+        return;
+    }
+    visit(pane);
+    const uint32_t head = pane + 0x14;
+    uint32_t node = 0;
+    Memory::TryRead32(head, node);
+    for (int guard = 0; node != 0 && node != head && guard < 256; ++guard) {
+        WalkPanes(node - 4, depth + 1, visit);
+        uint32_t next = 0;
+        if (!Memory::TryRead32(node, next)) {
+            break;
+        }
+        node = next;
+    }
+}
+
+bool AttachMenuLayout() {
+    const uint32_t object = GameMenus::CourseSelectMenuObject();
+    if (object == 0) {
+        g_menuLayout = MenuLayout{};
+        return false;
+    }
+    if (object == g_menuLayout.object) {
+        return true;
+    }
+    const uint32_t root = FindRootPane(object);
+    if (root == 0) {
+        return false;
+    }
+    MenuLayout layout;
+    layout.object = object;
+    WalkPanes(root, 0, [&](uint32_t pane) {
+        const std::string name = LivePaneName(pane);
+        uint32_t parent = 0;
+        Memory::TryRead32(pane + 0xC, parent);
+        layout.panes[name] = LivePane{pane, parent, Memory::ReadFloat32(pane + 0x30), Memory::ReadFloat32(pane + 0x50)};
+        layout.names[pane] = name;
+    });
+    if (layout.panes.count("W_corseSelect_01") == 0 || layout.panes.count("P_SBBase_04") == 0) {
+        return false;
+    }
+    RT_LOGF(RT_TAG_RUNTIME, "world map menu: %zu panes, adding Settings\n", layout.panes.size());
+    g_menuLayout = std::move(layout);
+    return true;
+}
+
+// How far (layout units, world space) a pane of the menu moves; panes not listed follow their parent.
+bool MenuShift(const std::string& name, float& dy) {
+    static const std::map<std::string, float> kShifts = [] {
+        std::map<std::string, float> m;
+        for (const char* n : {"1", "2", "3"}) {
+            m[std::string("P_SBBase_0") + n] = kMenuRaise;
+            m[std::string("T_corseSelectS0") + n] = kMenuRaise;
+            m[std::string("T_corseSelect_0") + n] = kMenuRaise;
+            m[std::string("W_SButton_0") + n] = kMenuRaise;
+            m[std::string("P_shadow_0") + n] = kMenuRaise;
+        }
+        for (const char* n : {"P_SBBase_04", "T_corseSelectS04", "T_corseSelect_05", "W_SButton_04", "P_shadow_04",
+                              "P_line_00", "P_winbg_00"}) {
+            m[n] = kMenuLower;
+        }
+        for (const char* n : {"N_back", "P_back", "P_backWhite", "T_back"}) {
+            m[n] = kMenuBackDrop;
+        }
+        return m;
+    }();
+    const auto it = kShifts.find(name);
+    if (it == kShifts.end()) {
+        return false;
+    }
+    dy = it->second;
+    return true;
+}
+
+void ApplyMenuLayout() {
+    if (!AttachMenuLayout()) {
+        return;
+    }
+    const auto& layout = g_menuLayout;
+    const std::function<float(uint32_t)> worldShift = [&](uint32_t pane) -> float {
+        const auto name = layout.names.find(pane);
+        if (name == layout.names.end()) {
+            return 0.0f;
+        }
+        float dy = 0.0f;
+        if (MenuShift(name->second, dy)) {
+            return dy;
+        }
+        return worldShift(layout.panes.at(name->second).parent);
+    };
+    for (const auto& [name, pane] : layout.panes) {
+        float dy = 0.0f;
+        if (MenuShift(name, dy)) {
+            Memory::WriteFloat32(pane.addr + 0x30, pane.y + dy - worldShift(pane.parent));
+        }
+    }
+    for (const char* grows : {"W_corseSelect_01", "P_winbg_01"}) {
+        const auto it = layout.panes.find(grows);
+        if (it != layout.panes.end()) {
+            Memory::WriteFloat32(it->second.addr + 0x50, it->second.h + kMenuGrow);
+        }
+    }
+}
+
+// The game's own corner brackets would stay on Quick Save or Title Screen while Settings holds the
+// cursor: hide them meanwhile (the visible bit of the cursor layout's root pane).
+void HideGameCursor(bool hide) {
+    // SELECT_CURSOR holds a layout per cursor it can show: hide (or show again) every one of them.
+    static std::vector<uint32_t> hidden;
+    if (hide && hidden.empty()) {
+        const uint32_t object = GameMenus::SelectCursorObject();
+        for (uint32_t off = 0; object != 0 && off < 0x1000; off += 4) {
+            uint32_t p = 0;
+            if (Memory::TryRead32(object + off, p) && InGuestRam(p) &&
+                std::find(hidden.begin(), hidden.end(), p) == hidden.end() && LivePaneName(p) == "RootPane") {
+                hidden.push_back(p);
+            }
+        }
+    }
+    for (const uint32_t root : hidden) {
+        uint32_t word = 0;
+        if (Memory::TryRead32(root + 0xB8, word)) {
+            Memory::Write32(root + 0xB8, hide ? (word & ~1u) : (word | 1u));  // mFlag bit 0: visible
+        }
+    }
+    if (!hide) {
+        hidden.clear();
+    }
+}
+
+// ---------------------------------------------------------------- clicking the game's menus
+// Nearly every menu in the game marks its choice with SELECT_CURSOR's corner brackets. A tap or click
+// on such a menu steers that cursor: D-pad presses toward the point until the brackets enclose it,
+// then 2. The cursor's place is read from its live layout (the corner panes' global matrices).
+struct CursorRect {
+    bool valid = false;
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // layout units, y up
+};
+
+// One corner pane's position: the translation column of nw4r::lyt::Pane::mGlbMtx (+0x84).
+bool PaneGlobalPos(uint32_t pane, float& x, float& y) {
+    uint32_t vis = 0;
+    if (!Memory::TryRead32(pane + 0xB8, vis)) {
+        return false;
+    }
+    x = Memory::ReadFloat32(pane + 0x84 + 12);
+    y = Memory::ReadFloat32(pane + 0x84 + 28);
+    return std::isfinite(x) && std::isfinite(y);
+}
+
+CursorRect GameCursorRect() {
+    CursorRect r;
+    const uint32_t object = GameMenus::SelectCursorObject();
+    if (object == 0) {
+        return r;
+    }
+    // Each layout the object holds is a cursor; the shown one has its root and corners visible.
+    for (uint32_t off = 0; off < 0x1000 && !r.valid; off += 4) {
+        uint32_t root = 0, flags = 0;
+        if (!Memory::TryRead32(object + off, root) || !InGuestRam(root) || LivePaneName(root) != "RootPane" ||
+            !Memory::TryRead32(root + 0xB8, flags) || (flags & 1u) == 0) {
+            continue;
+        }
+        float xs[4], ys[4];
+        int found = 0;
+        bool shown = true;
+        WalkPanes(root, 0, [&](uint32_t pane) {
+            const std::string name = LivePaneName(pane);
+            static const char* const kCorners[] = {"N_LU_00", "N_RU_00", "N_LD_00", "N_RD_00"};
+            for (int i = 0; i < 4; ++i) {
+                if (name == kCorners[i] && PaneGlobalPos(pane, xs[i], ys[i])) {
+                    ++found;
+                }
+            }
+            uint32_t f = 0;
+            if (name == "N_cursor_00" && Memory::TryRead32(pane + 0xB8, f) && ((f & 1u) == 0 || (f >> 24) == 0)) {
+                shown = false;  // hidden, or fully transparent
+            }
+        });
+        if (found == 4 && shown) {
+            r.valid = true;
+            r.x0 = std::min(xs[0], xs[2]);
+            r.x1 = std::max(xs[1], xs[3]);
+            r.y0 = std::min(ys[2], ys[3]);
+            r.y1 = std::max(ys[0], ys[1]);
+        }
+    }
+    return r;
+}
+
+// One step toward the tapped point: false once done (confirmed, or the cursor can't get there).
+bool CursorStep(Nav& n, uint32_t& button) {
+    button = 0;
+    if (n.confirming || ++n.steps > 24) {
+        return false;
+    }
+    const CursorRect r = GameCursorRect();
+    if (!r.valid) {
+        return false;
+    }
+    const float cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2;
+    const bool first = n.lastCx > 1e8f;
+    const bool changed = std::fabs(cx - n.lastCx) > 0.5f || std::fabs(cy - n.lastCy) > 0.5f;
+    n.lastCx = cx;
+    n.lastCy = cy;
+    if (changed && !first) {
+        n.stuck = 0;
+        n.lastDir = 0;
+        return true;  // it moved (or is still sliding): look again once it has settled
+    }
+    uint32_t blocked = 0;
+    if (!first && n.lastDir != 0) {
+        ++n.stuck;  // that press didn't move it
+        blocked = n.lastDir;
+    }
+    if (n.steps <= 2) {
+        RT_LOGF(RT_TAG_RUNTIME, "tap: cursor at %.0f..%.0f x %.0f..%.0f, tap %.0f,%.0f\n", r.x0, r.x1, r.y0, r.y1,
+                n.px, n.py);
+    }
+    if (n.px >= r.x0 && n.px <= r.x1 && n.py >= r.y0 && n.py <= r.y1) {
+        n.confirming = true;
+        button = kTwo;
+        return true;
+    }
+    if (n.stuck >= 2) {
+        return false;  // nothing there to pick
+    }
+    const float w = std::max(r.x1 - r.x0, 1.0f), h = std::max(r.y1 - r.y0, 1.0f);
+    const float dx = (n.px - cx) / w, dy = (n.py - cy) / h;
+    // Along the axis the point is farthest on, unless that last went nowhere.
+    const bool vertical = blocked != 0 ? !(blocked == kScreenUp || blocked == kScreenDown)
+                                       : std::fabs(dy) >= std::fabs(dx);
+    if (vertical) {
+        button = dy > 0 ? kScreenUp : kScreenDown;
+    } else {
+        button = dx > 0 ? kScreenRight : kScreenLeft;
+    }
+    n.lastDir = button;
+    return true;
+}
+
+// The menu window as the game draws it this frame: centre, scale and opacity from the window pane's
+// global matrix (+0x84) and global alpha (+0xB9), so Settings opens, closes and fades with it.
+bool MenuWindowTransform(float& cx, float& cy, float& scale, float& alpha) {
+    if (g_menuLayout.object == 0 || g_menuLayout.object != GameMenus::CourseSelectMenuObject()) {
+        return false;
+    }
+    const auto it = g_menuLayout.panes.find("W_corseSelect_01");
+    if (it == g_menuLayout.panes.end()) {
+        return false;
+    }
+    const uint32_t pane = it->second.addr;
+    uint32_t flags = 0;
+    if (!Memory::TryRead32(pane + 0xB8, flags) || (flags & 1u) == 0) {
+        return false;
+    }
+    // Hidden if any parent is hidden.
+    for (uint32_t p = it->second.parent, guard = 0; p != 0 && guard < 16; ++guard) {
+        uint32_t f = 0, parent = 0;
+        if (!Memory::TryRead32(p + 0xB8, f) || (f & 1u) == 0) {
+            return false;
+        }
+        Memory::TryRead32(p + 0xC, parent);
+        p = parent;
+    }
+    const float squeeze = Memory::ReadFloat32(0x8042B084u);
+    scale = Memory::ReadFloat32(pane + 0x84 + 20);  // the y scale: x also carries the layout squeeze
+    cx = Memory::ReadFloat32(pane + 0x84 + 12) / (squeeze > 0.1f ? squeeze : 1.0f);
+    cy = Memory::ReadFloat32(pane + 0x84 + 28);
+    alpha = static_cast<float>((flags >> 16) & 0xFFu) / 255.0f;  // mGlbAlpha
+    return std::isfinite(scale) && std::isfinite(cx) && std::isfinite(cy) && scale > 0.01f && alpha > 0.0f;
+}
+
+void DrawMenuSettings(ImDrawList* list) {
+    float cx = 0, cy = 0, scale = 1, alpha = 1;
+    if (!MenuWindowTransform(cx, cy, scale, alpha)) {
+        return;
+    }
+    // Draw in a view scaled about the window's centre, the way the window itself is scaled.
+    GameLayout::View view = GameLayout::GameView();
+    view.centerX += cx * view.scale;
+    view.centerY -= cy * view.scale;
+    view.scale *= scale;
+    view.gameScaleX *= scale;
+    const Canvas c{list, view, alpha};
+    Button(c, "Settings", 0, kMenuSettingsY, 312, g_menuFocus.load() && g_ui.screen == Screen::None,
+           true, g_ui.frame, 34.0f, 56.0f);
+}
+
 void DrawToggle(const Canvas& c) {
     const bool lan = g_ui.screen != Screen::None;
     Text(c, "Play:", kToggleX - kToggleW / 2 - 12, kToggleY, 24, 2, 0xFFFFFFFFu);
@@ -418,7 +803,7 @@ bool g_lastWide = true;
 
 // Cursor rows. Video: 0 tabs, 1 resolution, 2 match screen, 3 FPS, 4 OK. Keybinds: 0 tabs,
 // 1-12 the controls (two columns of six), 13 Reset Defaults, 14 OK.
-constexpr int kVideoOk = 4;
+constexpr int kVideoOk = 6;
 constexpr int kKeyRows = 6;
 constexpr int kKeyReset = 1 + Keybinds::kActionCount, kKeyOk = kKeyReset + 1;
 
@@ -545,31 +930,48 @@ void DrawSettingsTabs(const Canvas& c) {
     }
 }
 
+// Rows of the Video tab (layout units).
+constexpr float kRowRes = 118.0f, kRowMatch = 66.0f, kRowRate = 14.0f, kRowVSync = -38.0f, kRowFps = -90.0f;
+constexpr const char* kFrameRates[] = {"60 FPS", "120 FPS", "180 FPS", "240 FPS"};
+
 void DrawVideoTab(const Canvas& c) {
     const float scale = settings_overlay::RenderScale();
     const bool match = scale <= 0.0f;
     const std::vector<VideoChoice> choices = VideoChoices();
     const VideoChoice shown = choices[CurrentChoice(choices)];
-    Text(c, "Resolution", -300, 95, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
-    Button(c, ChoiceLabel(shown), 105, 95, 270, g_ui.cursor == 1, !match, g_ui.frame);
-    Arrow(c, -50, 95, false, g_ui.cursor == 1, !match);
-    Arrow(c, 260, 95, true, g_ui.cursor == 1, !match);
+    Text(c, "Resolution", -300, kRowRes, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
+    Button(c, ChoiceLabel(shown), 105, kRowRes, 270, g_ui.cursor == 1, !match, g_ui.frame);
+    Arrow(c, -50, kRowRes, false, g_ui.cursor == 1, !match);
+    Arrow(c, 260, kRowRes, true, g_ui.cursor == 1, !match);
     if (!match) {
-        AddHitEvent(-50, 95, 54, 62, 1, kEvLeft);
-        AddHitEvent(260, 95, 54, 62, 1, kEvRight);
-        AddHitEvent(105, 95, 276, 62, 1, kEvRight);
+        AddHitEvent(-50, kRowRes, 54, 50, 1, kEvLeft);
+        AddHitEvent(260, kRowRes, 54, 50, 1, kEvRight);
+        AddHitEvent(105, kRowRes, 276, 50, 1, kEvRight);
     }
-    Button(c, "Match Screen Resolution", 24, 25, 470, g_ui.cursor == 2, true, g_ui.frame);
-    Checkbox(c, -185, 25, match);
-    AddHit(0, 25, 480, 62, 2);
-    Button(c, "Show FPS Counter", 24, -45, 470, g_ui.cursor == 3, true, g_ui.frame);
-    Checkbox(c, -185, -45, settings_overlay::ShowFps());
-    AddHit(0, -45, 480, 62, 3);
-    const char* hint = match ? "The screen's own resolution, filling the whole screen."
+    Button(c, "Match Screen Resolution", 24, kRowMatch, 470, g_ui.cursor == 2, true, g_ui.frame);
+    Checkbox(c, -185, kRowMatch, match);
+    AddHit(0, kRowMatch, 480, 50, 2);
+    // Above 60, frame interpolation draws the frames between the game's own.
+    Text(c, "Frame Rate", -300, kRowRate, 26, 0);
+    Button(c, kFrameRates[settings_overlay::FrameRateCap()], 105, kRowRate, 270, g_ui.cursor == 3, true, g_ui.frame);
+    Arrow(c, -50, kRowRate, false, g_ui.cursor == 3);
+    Arrow(c, 260, kRowRate, true, g_ui.cursor == 3);
+    AddHitEvent(-50, kRowRate, 54, 50, 3, kEvLeft);
+    AddHitEvent(260, kRowRate, 54, 50, 3, kEvRight);
+    AddHitEvent(105, kRowRate, 276, 50, 3, kEvRight);
+    Button(c, "V-Sync", 24, kRowVSync, 470, g_ui.cursor == 4, true, g_ui.frame);
+    Checkbox(c, -185, kRowVSync, settings_overlay::VSync());
+    AddHit(0, kRowVSync, 480, 50, 4);
+    Button(c, "Show FPS Counter", 24, kRowFps, 470, g_ui.cursor == 5, true, g_ui.frame);
+    Checkbox(c, -185, kRowFps, settings_overlay::ShowFps());
+    AddHit(0, kRowFps, 480, 50, 5);
+    const char* hint = g_ui.cursor == 3 ? "Above 60, extra frames are drawn between the game's own (experimental)."
+                       : g_ui.cursor == 4 ? "Waits for the display: smoother frame pacing, no tearing."
+                       : match ? "The screen's own resolution, filling the whole screen."
                        : !DisplaySettings::SurfaceWide() ? "Rendered at this many lines, then scaled to the screen."
                        : shown.wide                      ? "Fills the whole screen with a wider view."
                                                          : "16:9, with black bars at the sides.";
-    Text(c, hint, 0, -108, 21);
+    Text(c, hint, 0, -133, 19);
     Button(c, "OK", 0, -kSettingsHeight / 2 + 43.0f, 232, g_ui.cursor == kVideoOk, true, g_ui.frame);
     AddHit(0, -kSettingsHeight / 2 + 43.0f, 240, 60, kVideoOk);
 }
@@ -649,7 +1051,14 @@ void HandleSettings(bool left, bool right, bool up, bool down, bool confirm, boo
             StepVideo(left ? -1 : 1, confirm);
         } else if (confirm && cursor == 2) {
             ToggleMatchScreen();
-        } else if (confirm && cursor == 3) {
+        } else if (cursor == 3 && (left || right || confirm)) {
+            const int count = static_cast<int>(std::size(kFrameRates));
+            int next = settings_overlay::FrameRateCap() + (left ? -1 : 1);
+            next = confirm ? (next + count) % count : std::clamp(next, 0, count - 1);
+            settings_overlay::SetFrameRateCap(next);
+        } else if (confirm && cursor == 4) {
+            settings_overlay::SetVSync(!settings_overlay::VSync());
+        } else if (confirm && cursor == 5) {
             settings_overlay::SetShowFps(!settings_overlay::ShowFps());
             g_settingsChanged = true;
         } else if (confirm && cursor == kVideoOk) {
@@ -984,6 +1393,24 @@ void TapAt(float lx, float ly, float gx, uint16_t scene, bool title) {
     }
     if (scene == kSceneBoot || title) {
         StartNav(NavKind::Press, static_cast<int>(kTwo | kA));  // the strap screen, "Press 2 to Start"
+        return;
+    }
+    if (scene == kSceneWorldMap && g_ui.menuSettingsShown) {
+        if (in(0, kMenuSettingsY, 345, 64)) {
+            g_menuFocus = true;
+            g_menuFocusFrom = std::max(2, GameMenus::CourseMenuCursor());
+            g_ui.settingsFromPause = true;
+            Show(Screen::Settings);
+        } else if (in(kMenuBackX, kMenuBackY, 210, 40)) {
+            StartNav(NavKind::Press, static_cast<int>(kOne));  // Back (1)
+        } else {
+            StartCursorNav(lx, ly);  // one of the game's own buttons
+        }
+        return;
+    }
+    // Any other menu of the game's with its select cursor up: steer the cursor to the tap.
+    if (scene != kSceneGameSetup && GameCursorRect().valid) {
+        StartCursorNav(lx, ly);
         return;
     }
     // The world map's button hints, anchored to the screen's corners: tapping one presses its button.
@@ -1328,8 +1755,21 @@ void Draw() {
     // The pause menus' gear: looked for every few frames (walking the object tree is not free).
     static int pauseCheck = 0;
     if (++pauseCheck % 6 == 0) {
-        g_ui.pauseGearShown = (g_ui.screen == Screen::None || g_ui.settingsFromPause) &&
-                              (scene == kSceneWorldMap || scene == kSceneStage) && GameMenus::PauseMenuOpen();
+        const int kind = GameMenus::PauseMenuKind();
+        g_ui.pauseGearShown = (g_ui.screen == Screen::None || g_ui.settingsFromPause) && scene == kSceneStage &&
+                              kind == 2;
+        g_ui.menuSettingsShown = scene == kSceneWorldMap && kind == 1;
+    }
+    if (scene == kSceneWorldMap) {
+        ApplyMenuLayout();
+    }
+    if (g_menuOpenSettings.exchange(false)) {
+        g_ui.settingsFromPause = true;
+        Show(Screen::Settings);
+    }
+    HideGameCursor(g_menuFocus.load() && g_ui.menuSettingsShown && g_ui.screen == Screen::None);
+    if (!g_ui.menuSettingsShown) {
+        g_menuFocus = false;
     }
     // Touch (the Android app's Tap) and mouse clicks on the menus.
     static int titleCheck = 0;
@@ -1367,6 +1807,10 @@ void Draw() {
         if (g_ui.pauseGearShown) {
             ++g_ui.frame;
             DrawPauseGear(Canvas{list, GameLayout::GameView(), 1.0f});
+        }
+        if (scene == kSceneWorldMap) {
+            ++g_ui.frame;
+            DrawMenuSettings(list);
         }
         return;
     }
@@ -1452,6 +1896,48 @@ void FilterGameInput(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
         if (pressed & (kTwo | kA)) g_ui.events |= kEvConfirm;
         if (pressed & (kOne | kB)) g_ui.events |= kEvBack;
         if ((pressed & kPlus) && g_ui.screen == Screen::Settings) g_ui.events |= kEvBack;  // Esc / + closes it
+
+        // The world map's + menu: Settings sits between Quick Save and Title Screen. The game never
+        // sees the presses that move onto or off it, and its own cursor is moved to match.
+        if (g_ui.menuSettingsShown && !Modal()) {
+            const uint32_t down = upright ? kDown : kLeft, up = upright ? kUp : kRight;
+            const int cursor = GameMenus::CourseMenuCursor();
+            if (!g_menuFocus) {
+                if ((pressed & down) != 0 && cursor == 2) {
+                    g_menuFocus = true;
+                    g_menuFocusFrom = 2;
+                    g_ui.heldFromMenu |= down;
+                } else if ((pressed & up) != 0 && cursor == 3) {
+                    g_menuFocus = true;
+                    g_menuFocusFrom = 3;
+                    g_ui.heldFromMenu |= up;
+                }
+            } else {
+                if ((pressed & up) != 0) {
+                    g_menuFocus = false;
+                    g_ui.heldFromMenu |= up;
+                    if (g_menuFocusFrom == 3) {
+                        g_ui.injectButtons = up;  // the game's cursor: Title Screen -> Quick Save
+                        g_ui.injectReads = 4;
+                    }
+                } else if ((pressed & down) != 0) {
+                    g_menuFocus = false;
+                    g_ui.heldFromMenu |= down;
+                    if (g_menuFocusFrom == 2) {
+                        g_ui.injectButtons = down;  // Quick Save -> Title Screen
+                        g_ui.injectReads = 4;
+                    }
+                } else if ((pressed & (kTwo | kA)) != 0) {
+                    g_ui.heldFromMenu |= pressed & (kTwo | kA);
+                    g_menuOpenSettings = true;
+                } else if ((pressed & (kOne | kB)) != 0) {
+                    g_menuFocus = false;  // the game closes its menu
+                }
+                if (g_menuFocus) {
+                    sample.hold &= ~(kUp | kDown | kLeft | kRight | kTwo | kA);
+                }
+            }
+        }
 
         // Up from any of the three files (also in Create Room's file pick) moves onto the LAN /
         // Couch toggle above them; the game never sees that press, so its cursor stays put.

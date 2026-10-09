@@ -70,6 +70,9 @@ void aurora_get_frame_interpolation_diagnostics(AuroraFrameInterpolationDiagnost
 // Generates transform-interpolated perspective frames between consecutive 60 Hz logical frames.
 // Supported targets are 0 (off), 120, 180 and 240. Guest simulation and VI timing are unchanged.
 void aurora_set_frame_interpolation_fps(uint32_t targetFps);
+// NSMBW: V-Sync on (Fifo) or off (Immediate, else Mailbox); on by default.
+void aurora_set_vsync(bool enabled);
+bool aurora_get_vsync();
 uint32_t aurora_get_frame_interpolation_fps();
 
 // Newly encountered GX pipelines compile on the bounded worker queue. Draws whose pipeline is not

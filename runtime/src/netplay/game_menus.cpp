@@ -227,7 +227,46 @@ std::string DumpStates() {
     return text;
 }
 
-bool PauseMenuOpen() {
+// NSMBW_DUMP_OBJ=<profile>: log the words of that object's first 0x800 bytes that change (finding
+// fields such as a menu's cursor).
+void DumpObjectChanges() {
+    static const int profile = [] {
+        const char* value = std::getenv("NSMBW_DUMP_OBJ");
+        return value != nullptr ? static_cast<int>(std::strtol(value, nullptr, 16)) : -1;
+    }();
+    if (profile < 0) {
+        return;
+    }
+    static uint32_t lastObject = 0;
+    static std::vector<uint32_t> last;
+    const uint32_t object = Find(static_cast<uint16_t>(profile));
+    if (object == 0) {
+        lastObject = 0;
+        return;
+    }
+    std::vector<uint32_t> now(0x200);
+    for (uint32_t i = 0; i < now.size(); ++i) {
+        Memory::TryRead32(object + i * 4, now[i]);
+    }
+    if (object == lastObject) {
+        std::string text;
+        for (uint32_t i = 0; i < now.size(); ++i) {
+            if (now[i] != last[i] && now[i] < 0x10000 && last[i] < 0x10000) {
+                char item[40];
+                std::snprintf(item, sizeof(item), " +%X:%X->%X", i * 4, last[i], now[i]);
+                text += item;
+            }
+        }
+        if (!text.empty()) {
+            std::fprintf(stderr, "[obj] %s\n", text.c_str());
+        }
+    }
+    lastObject = object;
+    last = std::move(now);
+}
+
+int PauseMenuKind() {
+    DumpObjectChanges();
     // The state's name, by StateID address (they never move).
     static uint32_t knownOpen[4] = {}, knownClosed[16] = {};
     for (const uint16_t profile : {kProfileCourseSelectMenu, kProfilePauseWindow}) {
@@ -236,8 +275,9 @@ bool PauseMenuOpen() {
         if (object == 0 || !Memory::TryRead32(object + kPauseMenuState, id) || id == 0) {
             continue;
         }
+        const int kind = profile == kProfileCourseSelectMenu ? 1 : 2;
         if (std::find(std::begin(knownOpen), std::end(knownOpen), id) != std::end(knownOpen)) {
-            return true;
+            return kind;
         }
         if (std::find(std::begin(knownClosed), std::end(knownClosed), id) != std::end(knownClosed)) {
             continue;
@@ -265,10 +305,31 @@ bool PauseMenuOpen() {
             }
         }
         if (open) {
-            return true;
+            return kind;
         }
     }
-    return false;
+    return 0;
+}
+
+bool PauseMenuOpen() {
+    return PauseMenuKind() != 0;
+}
+
+uint32_t CourseSelectMenuObject() {
+    return Find(kProfileCourseSelectMenu);
+}
+
+int CourseMenuCursor() {
+    const uint32_t object = Find(kProfileCourseSelectMenu);
+    uint32_t cursor = 0;
+    if (object == 0 || !Memory::TryRead32(object + 0x268, cursor) || cursor > 3) {
+        return -1;
+    }
+    return static_cast<int>(cursor);
+}
+
+uint32_t SelectCursorObject() {
+    return Find(0x2CF);  // SELECT_CURSOR: the corner brackets the game's menus share
 }
 
 uint16_t CurrentScene() {

@@ -80,6 +80,10 @@ void release_surface() noexcept;
 bool refresh_surface(bool recreate = true);
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,
                       bool force = false);
+// NSMBW: V-Sync (Fifo present mode). A request applies at the next frame boundary.
+void request_vsync(bool enabled) noexcept;
+bool vsync_enabled() noexcept;
+bool take_vsync_change() noexcept;
 TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool multisampled);
 const TextureWithSampler& present_source() noexcept;
 PresentSource current_present_source() noexcept;

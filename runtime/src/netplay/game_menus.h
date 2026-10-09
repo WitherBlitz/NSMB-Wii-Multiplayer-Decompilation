@@ -39,6 +39,14 @@ std::vector<uint16_t> Profiles();
 uint16_t CurrentScene();
 // The world map's + menu or a level's pause window is open, waiting for a choice.
 bool PauseMenuOpen();
+// Which is open: 0 none, 1 the world map's + menu (dCourseSelectMenu_c), 2 a level's pause window.
+int PauseMenuKind();
+// The world map's + menu object, and its cursor (0 Star Coins, 1 Add/Drop Players, 2 Quick Save,
+// 3 Title Screen; dCourseSelectMenu_c +0x268), -1 without one.
+uint32_t CourseSelectMenuObject();
+int CourseMenuCursor();
+// The SELECT_CURSOR object (the menus' corner brackets), 0 without one.
+uint32_t SelectCursorObject();
 // NSMBW_DUMP_STATES debugging: the StateIDs held by the listed profiles' objects.
 std::string DumpStates();
 
