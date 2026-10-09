@@ -1310,6 +1310,8 @@ void DrawStartupScreen() {
         constexpr const char* kTitle = "Made by WitherBlitz";
         constexpr const char* kCredit =
             "Code from WiiCompiled used and modified by an LLM to make this port possible.";
+        // At the bottom of the screen.
+        constexpr const char* kReport = "Report any bugs you find to my github page!";
         static const std::shared_ptr<GameLayout::Font> titleFont = GameLayout::LoadFont("mj2d01_marioFont_64_IA4.brfnt");
         static const std::shared_ptr<GameLayout::Font> bodyFont = GameLayout::LoadFont("mj2d00_MessageFont_32_I4.brfnt");
         float startY = 0.0f;
@@ -1340,6 +1342,11 @@ void DrawStartupScreen() {
                 GameLayout::DrawText(list, view, *bodyFont, GameLayout::Utf16(shaderLine), 0.0f, y - 22.0f, 20.0f,
                                      0xB4BECAFFu, 0xB4BECAFFu, 1.0f, 1, 1);
             }
+            const float bottom = -view.centerY / view.scale + 30.0f;
+            GameLayout::DrawText(list, view, *bodyFont, GameLayout::Utf16(kReport), 2.0f, bottom - 2.0f, 22.0f,
+                                 0x30200AFFu, 0x30200AFFu, 0.6f, 1, 1);
+            GameLayout::DrawText(list, view, *bodyFont, GameLayout::Utf16(kReport), 0.0f, bottom, 22.0f, 0xFFD24AFFu,
+                                 0xFFD24AFFu, 1.0f, 1, 1);
             startY = view.centerY - (y - 20.0f) * view.scale;
             titleHeight = 0.0f;
         } else {
@@ -1355,6 +1362,10 @@ void DrawStartupScreen() {
             ImGui::TextUnformatted(kCredit);
             ImGui::PopTextWrapPos();
             startY = ImGui::GetCursorPosY();
+            const ImVec2 reportSize = ImGui::CalcTextSize(kReport);
+            ImGui::SetCursorPos(ImVec2(std::max(0.0f, (viewport->Size.x - reportSize.x) * 0.5f),
+                                       viewport->Size.y - reportSize.y - 24.0f));
+            ImGui::TextUnformatted(kReport);
             titleHeight = 0.0f;
         }
         const ImVec2 titleSize{0.0f, titleHeight};

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "gx.hpp"
 
 #include "pipeline.hpp"
@@ -1249,6 +1250,17 @@ GXState::CopyTextureRef* find_copy_texture_for_texobj(const GXTexObj_& obj) noex
   }
 
   if (auto* cached = find_cached_copy_texture(obj.data, obj)) {
+    // NSMBW debugging: NSMBW_LOG_STALE_COPIES logs copies sampled in a frame that didn't produce them.
+    static const bool logStale = std::getenv("NSMBW_LOG_STALE_COPIES") != nullptr;
+    if (logStale && cached->lastProducedFrame != gfx::current_frame()) {
+      static u32 lastFrame = 0, count = 0;
+      if (lastFrame != gfx::current_frame()) {
+        if (count != 0) std::fprintf(stderr, "[stalecopy] frame %u: %u stale samples\n", lastFrame, count);
+        lastFrame = gfx::current_frame();
+        count = 0;
+      }
+      ++count;
+    }
     return cached;
   }
 
@@ -1256,6 +1268,28 @@ GXState::CopyTextureRef* find_copy_texture_for_texobj(const GXTexObj_& obj) noex
   if (exact != g_gxState.copyTextures.end() && copy_ref_matches_texobj(exact->second, obj)) {
     mark_copy_texture_sampled(obj.data, exact->second);
     return &exact->second;
+  }
+  // NSMBW debugging: NSMBW_LOG_COPY_MISSES logs a texture whose address holds an EFB copy that it
+  // doesn't match (so it falls back to guest RAM, which GPU-only copies never wrote).
+  static const bool logMisses = std::getenv("NSMBW_LOG_COPY_MISSES") != nullptr;
+  if (logMisses) {
+    static int logged = 0;
+    const GXState::CopyTextureRef* other = exact != g_gxState.copyTextures.end() ? &exact->second : nullptr;
+    const GXState::CopyTextureKey* cacheKey = nullptr;
+    for (const auto& [key, ref] : g_gxState.copyTextureCache) {
+      if (key.dest == obj.data) {
+        cacheKey = &key;
+        break;
+      }
+    }
+    if ((other != nullptr || cacheKey != nullptr) && logged < 200) {
+      ++logged;
+      std::fprintf(stderr, "[copymiss] frame %u tex %p %ux%u fmt %u: copy %ux%u fmt %d, cache key %ux%u fmt %d\n",
+                   gfx::current_frame(), obj.data, obj.width(), obj.height(), obj.format(),
+                   other ? other->width : 0, other ? other->height : 0, other ? static_cast<int>(other->format) : -1,
+                   cacheKey ? cacheKey->width : 0, cacheKey ? cacheKey->height : 0,
+                   cacheKey ? static_cast<int>(cacheKey->format) : -1);
+    }
   }
   // A guest allocation can be recycled while an old GPU-only EFB copy still exists.
   return nullptr;
@@ -1272,6 +1306,12 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     GXTexObj_ obj = g_gxState.loadedTextures[i];
     auto& textureBind = g_gxState.textures[i];
     const TextureResolveIdentity identity = make_texture_resolve_identity(obj);
+    // NSMBW debugging: NSMBW_NO_TEXMEMO resolves every sampled texture from scratch (no memo shortcuts).
+    static const bool noTexMemo = std::getenv("NSMBW_NO_TEXMEMO") != nullptr;
+    if (noTexMemo) {
+      s_lastTextureResolveIdentityValid[i] = false;
+      s_lastStaticSourceResolveKeyValid[i] = false;
+    }
     // obj is unchanged between here and the memo checks below, so the two former can_cache_static_texture_upload(obj) calls are one value.
     const bool canCacheUpload = can_cache_static_texture_upload(obj);
     const bool sameResolvedTexture = canCacheUpload && s_lastTextureResolveIdentityValid[i] &&
@@ -1288,7 +1328,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
     const size_t identityHash = canUseStaticSourceKey ? absl::Hash<TextureResolveIdentity>{}(identity) : 0;
     if (canUseStaticSourceKey) {
       const auto& entry = s_textureResolveIdentityCache[identityHash & (s_textureResolveIdentityCache.size() - 1)];
-      if (entry.valid && entry.hash == identityHash && entry.copyTextureRevision == s_copyTextureStateRevision &&
+      if (!noTexMemo && entry.valid && entry.hash == identityHash && entry.copyTextureRevision == s_copyTextureStateRevision &&
           entry.validationRevision == s_staticTextureCacheValidationRevision && entry.identity == identity &&
           entry.binding) {
         textureBind = entry.binding;
@@ -1345,6 +1385,17 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
       handle = resolve_static_texture(obj);
     }
 
+    // NSMBW debugging: NSMBW_TEX_PROBE logs each texture (address, size, format) the first time it
+    // resolves from a given source: an EFB copy or guest RAM (and which GPU texture).
+    static const bool texProbe = std::getenv("NSMBW_TEX_PROBE") != nullptr;
+    if (texProbe && handle) {
+      static absl::flat_hash_set<std::pair<const void*, const void*>> seen;
+      if (seen.size() < 4000 && seen.insert({obj.data, handle.get()}).second) {
+        std::fprintf(stderr, "[texprobe] frame %u tex %p %ux%u fmt %u from %s gpu %p\n", gfx::current_frame(),
+                     obj.data, obj.width(), obj.height(), obj.format(), copyRef != nullptr ? "copy" : "ram",
+                     static_cast<const void*>(handle.get()));
+      }
+    }
     obj.mFormat = resolved_format_for_handle(handle);
     textureBind = gfx::TextureBind{obj, std::move(handle)};
     // The per-texmap memo below lets a later draw reuse this binding without touching guest memory again, including for no_cache textures that never reach any of the stamped caches above, so it has to count as a stamp.

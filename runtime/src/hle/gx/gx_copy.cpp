@@ -6,6 +6,9 @@
 #include <dolphin/gx/GXAurora.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <string>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -151,6 +154,27 @@ extern "C" void GX__CopyTex_8016fd74(uint32_t da, uint32_t c) {
     // later. RISK: copies above the probe threshold, or on the offscreen list, are not
     // auto-downloaded, so guest reads see stale RAM; call aurora_flush_efb_copies_to_ram if a
     // copy needs reading back.
+    // NSMBW_LOG_COPY_FRAMES: per frame, the texture copies made (size, format, source, destination),
+    // logged with the time whenever that list changes from the previous frame's.
+    if (static const bool logFrames = std::getenv("NSMBW_LOG_COPY_FRAMES") != nullptr; logFrames) {
+        static uint32_t frame = ~0u;
+        static std::string current, previous;
+        if (frame != static_cast<uint32_t>(g_gxFrameCount)) {
+            if (current != previous) {
+                const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                std::fprintf(stderr, "[copyframe] t=%lld frame %u:%s\n", static_cast<long long>(ms), frame,
+                             current.c_str());
+                previous = current;
+            }
+            current.clear();
+            frame = static_cast<uint32_t>(g_gxFrameCount);
+        }
+        char item[96];
+        std::snprintf(item, sizeof(item), " %ux%u/%u@%u,%u>%08X", g_texCopyState.dstWidth, g_texCopyState.dstHeight,
+                      g_texCopyState.dstFormat, rawSrcLeft, rawSrcTop, da);
+        current += item;
+    }
     // NSMBW_LOG_COPIES: each distinct texture copy (destination size, format, source rectangle) once,
     // with the guest code that asked for it (profiling).
     if (static const bool logCopies = std::getenv("NSMBW_LOG_COPIES") != nullptr; logCopies) {

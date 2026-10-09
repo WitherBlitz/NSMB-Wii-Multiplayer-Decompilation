@@ -30,11 +30,15 @@ constexpr size_t kAsyncReadbackMaxBytes = 256;
 // Each destination keeps its readback buffer forever. Only a handful are expected, and the cap
 // stops an unexpected pattern of one-shot destinations from leaking GPU buffers.
 constexpr size_t kMaxAsyncSlots = MaxAsyncReadbackSlots;
+// NSMBW: texture patches (animated tiles) are read back every frame, one slot per patch position.
+constexpr size_t kAsyncPatchMaxBytes = 16384;
+constexpr size_t kMaxAsyncPatchSlots = 512;
 
 struct PendingCopy {
   void* dest = nullptr;
   uint32_t width = 0;
   uint32_t height = 0;
+  uint32_t strideWidth = 0;  // > width: a patch into a wider texture
   GXTexFmt format = GX_TF_RGBA8;
   TextureHandle texture;
   TextureHandle nativeTexture;
@@ -67,6 +71,7 @@ struct AsyncSlot {
   GXTexFmt format = GX_TF_RGBA8;
   uint32_t width = 0;
   uint32_t height = 0;
+  uint32_t strideWidth = 0;
   uint32_t hostWidth = 0;
   uint32_t hostHeight = 0;
   HostPixelOrder order = HostPixelOrder::RGBA;
@@ -148,14 +153,32 @@ void complete_async_slot(void* dest, uint64_t generation, wgpu::MapAsyncStatus s
       // Writes guest RAM from the event-queue thread while the guest may be reading it. The only
       // consumer min/maxes depth for a fade factor, so a torn tile just mixes two frames' depths.
       const size_t outputSize = encoded_size(slot.format, slot.width, slot.height);
-      if (!encode(slot.dest, outputSize, slot.format, slot.width, slot.height, pixels, slot.hostWidth, slot.hostHeight,
-                  slot.bytesPerRow, slot.order)) {
-        Log.error("Failed to encode async EFB RAM copy format=0x{:x} size={}x{}", static_cast<unsigned>(slot.format),
-                  slot.width, slot.height);
+      if (slot.strideWidth > slot.width) {
+        // A patch: encode it on its own, then lay each row of blocks into the wider texture.
+        std::vector<uint8_t> patch(outputSize);
+        if (encode(patch.data(), outputSize, slot.format, slot.width, slot.height, pixels, slot.hostWidth,
+                   slot.hostHeight, slot.bytesPerRow, slot.order)) {
+          const size_t rowBytes = encoded_size(slot.format, slot.width, 1);
+          const size_t pitch = encoded_size(slot.format, slot.strideWidth, 1);
+          const size_t rows = rowBytes != 0 ? outputSize / rowBytes : 0;
+          auto* out = static_cast<uint8_t*>(slot.dest);
+          for (size_t row = 0; row < rows; ++row) {
+            std::memcpy(out + row * pitch, patch.data() + row * rowBytes, rowBytes);
+          }
+          if (rows != 0) {
+            notify_guest_write(slot.dest, (rows - 1) * pitch + rowBytes);
+          }
+        }
+      } else {
+        if (!encode(slot.dest, outputSize, slot.format, slot.width, slot.height, pixels, slot.hostWidth,
+                    slot.hostHeight, slot.bytesPerRow, slot.order)) {
+          Log.error("Failed to encode async EFB RAM copy format=0x{:x} size={}x{}",
+                    static_cast<unsigned>(slot.format), slot.width, slot.height);
+        }
+        // Guest RAM written from outside the embedder, so nothing bumps its write generation and a
+        // texture cached over this range would keep its digest.
+        notify_guest_write(slot.dest, outputSize);
       }
-      // Guest RAM written from outside the embedder, so nothing bumps its write generation and a
-      // texture cached over this range would keep its digest.
-      notify_guest_write(slot.dest, outputSize);
     }
     slot.buffer.Unmap();
   } else if (status != wgpu::MapAsyncStatus::CallbackCancelled && status != wgpu::MapAsyncStatus::Aborted) {
@@ -180,7 +203,8 @@ void drain_async_events() noexcept {
 
 } // namespace
 
-void schedule(void* dest, uint32_t width, uint32_t height, GXTexFmt format, TextureHandle texture) noexcept {
+void schedule(void* dest, uint32_t width, uint32_t height, GXTexFmt format, TextureHandle texture,
+              uint32_t strideWidth) noexcept {
   if (dest == nullptr || width == 0 || height == 0 || !texture) {
     return;
   }
@@ -195,23 +219,29 @@ void schedule(void* dest, uint32_t width, uint32_t height, GXTexFmt format, Text
       .format = format,
       .texture = std::move(texture),
   };
+  const bool patch = strideWidth > width;
+  request.strideWidth = patch ? strideWidth : 0;
 
   const size_t encodedSize = encoded_size(format, width, height);
   // Offscreen copies resolve on a separate pass list that the sealed frame's
   // native render does not replay, so they stay on the lazy path.
-  bool async = !is_offscreen() && encodedSize != 0 && encodedSize <= kAsyncReadbackMaxBytes;
+  bool async = !is_offscreen() && encodedSize != 0 &&
+               encodedSize <= (patch ? kAsyncPatchMaxBytes : kAsyncReadbackMaxBytes);
   if (async) {
     std::lock_guard lock{g_asyncMutex};
     const auto it = g_asyncSlots.find(dest);
     if (it == g_asyncSlots.end()) {
-      if (g_asyncSlots.size() >= kMaxAsyncSlots) {
+      if (g_asyncSlots.size() >= (patch ? kMaxAsyncPatchSlots : kMaxAsyncSlots)) {
         async = false;
       } else {
         g_asyncSlots.try_emplace(dest);
-        // No readback has landed here yet. 0xff decodes to far Z, which the probe reads as unobstructed
-        // so a new flare fades in; zero-filled RAM would decode as fully occluded.
-        std::memset(dest, 0xff, encodedSize);
-        notify_guest_write(dest, encodedSize);
+        if (!patch) {
+          // No readback has landed here yet. 0xff decodes to far Z, which the probe reads as
+          // unobstructed so a new flare fades in; zero-filled RAM would decode as fully occluded.
+          // (A patch keeps the texture's own pixels until its first readback lands.)
+          std::memset(dest, 0xff, encodedSize);
+          notify_guest_write(dest, encodedSize);
+        }
       }
     }
   }
@@ -433,6 +463,7 @@ void encode_async_downloads(const wgpu::CommandEncoder& encoder) noexcept {
     slot.format = pending.format;
     slot.width = pending.width;
     slot.height = pending.height;
+    slot.strideWidth = pending.strideWidth;
     slot.hostWidth = texture->size.width;
     slot.hostHeight = texture->size.height;
     slot.order = texture_pixel_order(texture);

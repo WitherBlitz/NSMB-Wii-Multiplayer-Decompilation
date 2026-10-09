@@ -1,3 +1,5 @@
+#include <absl/container/flat_hash_set.h>
+#include <array>
 #include "command_processor.hpp"
 
 #include "../gfx/common.hpp"
@@ -527,6 +529,25 @@ struct ProcessTimer {
   }
 };
 
+// NSMBW debugging: NSMBW_MERGE_SUSPECTS logs register writes that changed a value but left the state
+// clean, when a draw then merged into the previous one (state that a merged draw would not see).
+static bool MergeSuspectsOn() {
+  static const bool on = std::getenv("NSMBW_MERGE_SUSPECTS") != nullptr;
+  return on;
+}
+static std::vector<u32> g_mergeSuspects;  // kind << 16 | register
+static void note_write(u32 kind, u32 reg, u32 value, bool wasDirty) {
+  static std::array<u32, 3 * 0x10000> shadow{};
+  static std::array<bool, 3 * 0x10000> valid{};
+  const u32 key = kind * 0x10000 + (reg & 0xFFFF);
+  const bool changed = !valid[key] || shadow[key] != value;
+  shadow[key] = value;
+  valid[key] = true;
+  if (!wasDirty && changed && !g_gxState.stateDirty) {
+    g_mergeSuspects.push_back(kind << 16 | (reg & 0xFFFF));
+  }
+}
+
 uint32_t process(const u8* data, u32 size, bool bigEndian) {
   ZoneScoped;
   ProcessTimer timer;
@@ -554,7 +575,9 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
       CHECK(pos + 4 <= size, "BP reg read overrun");
       u32 value = read_u32(data + pos, bigEndian);
       pos += 4;
+      const bool wasDirty = g_gxState.stateDirty;
       handle_bp(value, bigEndian);
+      if (MergeSuspectsOn()) note_write(0, value >> 24, value & 0xFFFFFF, wasDirty);
       break;
     }
 
@@ -563,12 +586,22 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
       u8 addr = data[pos++];
       u32 value = read_u32(data + pos, bigEndian);
       pos += 4;
+      const bool wasDirty = g_gxState.stateDirty;
       handle_cp(addr, value, bigEndian);
+      if (MergeSuspectsOn()) note_write(1, addr, value, wasDirty);
       break;
     }
 
     case CP_CMD_LOAD_XF_REG: {
+      const bool wasDirty = g_gxState.stateDirty;
+      const u32 start = pos;
       handle_xf(data, pos, size, bigEndian);
+      if (MergeSuspectsOn() && start + 4 <= size) {
+        const u32 header = read_u32(data + start, bigEndian);
+        u32 hash = 2166136261u;
+        for (u32 i = start + 4; i < pos; ++i) hash = (hash ^ data[i]) * 16777619u;
+        note_write(2, header & 0xFFFF, hash, wasDirty);
+      }
       break;
     }
 
@@ -599,6 +632,17 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
         break;
       }
       u8* srcData = ((u8*)array.data) + byteOffset;
+      const bool wasDirtyIndx = g_gxState.stateDirty;
+      if (MergeSuspectsOn()) {
+        u32 hash = 2166136261u;
+        for (u32 i = 0; i < byteCount; ++i) hash = (hash ^ srcData[i]) * 16777619u;
+        // Kind 2 (XF) by destination address, as a direct XF write would be.
+        const bool before = g_gxState.stateDirty;
+        (void)before;
+        copy_xf_data(dstAddr, srcData, len, bigEndian);
+        note_write(2, 0x8000 | dstAddr, hash, wasDirtyIndx);
+        break;
+      }
       if (!copy_xf_data(dstAddr, srcData, len, bigEndian)) {
 #ifndef NDEBUG
         Log.debug("Unimplemented indexed XF load (opcode 0x{:02X}, dstAddr=0x{:04X})", opcode, dstAddr);
@@ -1447,7 +1491,9 @@ static void handle_bp(u32 value, bool bigEndian) {
 }
 
 extern "C" void GXApplyBPReg(u8 reg, u32 value) {
+  const bool wasDirty = g_gxState.stateDirty;
   handle_bp((static_cast<u32>(reg) << 24) | (value & 0x00FFFFFFu), true);
+  if (MergeSuspectsOn()) note_write(0, 0x100 | reg, value & 0x00FFFFFFu, wasDirty);
 }
 
 static bool cacheable_cp_register(u8 addr) {
@@ -2265,10 +2311,20 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   DrawData* mergeTarget = nullptr;
+  // NSMBW debugging: NSMBW_NO_MERGE turns draw merging off.
+  static const int noMergeMode = [] {
+    const char* v = std::getenv("NSMBW_NO_MERGE");
+    return v == nullptr ? 0 : std::atoi(v);
+  }();
+  // 1: never merge; 2: not while drawing into the EFB below line 456 (light textures, tile frames);
+  // 3: only there.
+  const bool scratch =
+      noMergeMode >= 2 && g_gxState.xfViewport[4] - 340.0f + g_gxState.xfViewport[1] > 455.0f;
+  const bool noMerge = noMergeMode == 1 || (noMergeMode == 2 && scratch) || (noMergeMode == 3 && !scratch);
   // Decide admission before allocating anything. The merged path needs only
   // vertices and indices; it must not resolve pipelines or upload arrays.
   // Try to merge with previous draw call
-  if (!g_gxState.stateDirty) LIKELY {
+  if (!g_gxState.stateDirty && !noMerge) LIKELY {
     auto* lastDraw = gfx::get_last_draw_command<DrawData>();
     // Expanded lines/points have different vertex interpretation even with one instance.
     // Triangle-list output has no restart index; index 65535 is usable.
@@ -2279,6 +2335,19 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
             vtxCount <= 65536u) LIKELY {
       mergeTarget = lastDraw;
     }
+  }
+  if (MergeSuspectsOn()) {
+    if (mergeTarget != nullptr && !g_mergeSuspects.empty()) {
+      static absl::flat_hash_set<u32> logged;
+      for (const u32 code : g_mergeSuspects) {
+        if (logged.size() < 200 && logged.insert(code).second) {
+          static const char* const kKinds[] = {"BP", "CP", "XF"};
+          std::fprintf(stderr, "[mergesuspect] %s 0x%X changed without dirtying, then a draw merged\n",
+                       kKinds[code >> 16], code & 0xFFFF);
+        }
+      }
+    }
+    g_mergeSuspects.clear();
   }
   if (!admit_draw(prim, fmt, vtxCount, totalVtxBytes, mergeTarget != nullptr)) throw gfx::StagingBatchFull{};
   const uint8_t* vertices = data + pos;

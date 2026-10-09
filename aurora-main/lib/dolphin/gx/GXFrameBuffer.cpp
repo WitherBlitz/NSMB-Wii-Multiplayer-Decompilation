@@ -589,7 +589,13 @@ void GXCopyTex(void* dest, GXBool clear) {
   aurora::gx::notify_copy_texture_created();
   g_gxState.copyTextures[dest] = handle;
   // Keep the GPU copy and download it only if guest code reads the destination.
-  aurora::gfx::efb_ram::schedule(dest, logicalDstWidth, logicalDstHeight, texCopyFmt, handle.handle);
+  // A copy smaller than its destination size patches a wider texture (NSMBW's animated tiles): read
+  // it back each frame, laid out at that texture's pitch, so the texture animates.
+  const u32 patchStride = g_gxState.texCopyDstWidth > logicalDstWidth ? g_gxState.texCopyDstWidth : 0;
+  aurora::gfx::efb_ram::schedule(dest, logicalDstWidth, logicalDstHeight, texCopyFmt, handle.handle, patchStride);
+  // NSMBW: a draw after this copy must not merge into one before it: merged primitives are recorded
+  // with the earlier draw and would render before the copy reads the EFB.
+  g_gxState.stateDirty = true;
 }
 
 void GXClearBoundingBox() {
