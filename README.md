@@ -51,9 +51,10 @@ lockstep. If a player drops, the others get a message instead of a frozen game, 
 the progress. See [LAN and Tailscale multiplayer](#lan-and-tailscale-multiplayer).
 
 **Tap the menus.**
-On the title screen, Select a File, Select Players and the LAN menus, just tap what you want
-(or click it with the mouse on Windows). The on-screen controller hides while those menus are up
-and comes back for the game.
+Tap (or click with the mouse on Windows) what you want on the game's menus: the title screen,
+Select a File, Select Players, the LAN menus, the world map's Menu / Select World / View Map /
+Items buttons, the pause and **+** menus and the Save / Don't Save style windows. The on-screen
+controller hides on the main menus and comes back for the game.
 
 **Touch controls, tilt and shake.**
 An on-screen sideways Wii Remote (D-pad, 1, 2, A, Shake, + and -) with adjustable opacity and
@@ -75,11 +76,13 @@ resolution with **Match Screen Resolution**.
 
 **Settings gear.**
 The gear next to the Couch / LAN button on the save file screen opens the game's settings window,
-and so does the gear at the top right while the world map's **+** menu or a level's pause menu is
-open (tap it, or click it on Windows).
+and so do **Settings** in the world map's **+** menu (under Quick Save) and the gear at the top
+right of a level's pause menu.
 **Video:** Match Screen Resolution, the resolution multiplier (greyed out while matching the
 screen; on a wide screen each scale comes as "1x (480p)" with black bars or "1x Ultrawide" filling
-the screen) and Show FPS Counter (off by default). **Keybinds:** every keyboard control, each
+the screen), Frame Rate (60, 120, 180 or 240 FPS; above 60 through experimental frame
+interpolation), V-Sync (on by default, for even frame pacing) and Show FPS Counter (off by
+default). **Keybinds:** every keyboard control, each
 changed by picking it and pressing the new key, with Reset Defaults.
 
 **Settings.**
@@ -143,9 +146,9 @@ The app's start screen shows these steps until a game is imported, and **Help** 
 Download from the [Releases](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation/releases/latest)
 page:
 
-- **Android:** `NSMBW-0.0.9-android-arm64.apk`. Open it on your phone and allow installing from that
+- **Android:** `NSMBW-0.0.10-android-arm64.apk`. Open it on your phone and allow installing from that
   app when Android asks. Updates install over it and keep your saves and game files.
-- **Windows:** `NSMBW-0.0.9-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings
+- **Windows:** `NSMBW-0.0.10-windows-x64.zip`. Extract it anywhere and run `NSMBW.exe`. Settings
   (including where your game files are), saves and caches live in `Documents\MarioWiiSaveData`, so a
   new version, extracted anywhere, carries on where the last one left off. The first start of 0.0.8 or
   later takes over the data of an older version extracted in the same folder (or of the version it
@@ -174,6 +177,7 @@ start menu.
 | Enter or Esc | + (pause, the world map's menu) |
 | Minus or Tab | - |
 | F10 | Settings bar |
+| F11 | Fullscreen on / off |
 
 Every key can be changed in the gear's **Keybinds** tab on the save file screen. A game controller
 also works on Windows as a sideways Wii Remote (remap it under F10 > Controls).
@@ -268,7 +272,7 @@ Open an issue with your device, what you did, and (on Windows) the log from
 `Documents\MarioWiiSaveData\Logs`.
 
 **Is it done?**
-No, this is 0.0.9. It boots and plays on the tested devices, but not every level has been checked,
+No, this is 0.0.10. It boots and plays on the tested devices, but not every level has been checked,
 and rendering, performance and LAN play are still being worked on.
 
 ## AI usage
