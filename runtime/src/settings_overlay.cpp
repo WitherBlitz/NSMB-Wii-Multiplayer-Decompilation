@@ -11,6 +11,7 @@
 #include "music_attenuation.h"
 #include "runtime_config.h"
 #include "display_settings.h"
+#include <dolphin/gx/GXAurora.h>
 #include "runtime_log.h"
 #include "wii_remote_input.h"
 
@@ -1597,6 +1598,7 @@ void InitializeRuntimeSettings() noexcept {
     const uint32_t targetFps = kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)];
     LimitResolutionForFrameRate();
     aurora_set_frame_interpolation_fps(targetFps);
+    AuroraSetTexturePatches(RuntimeConfigFile::SpinningCoins(true));
     aurora_set_display_mode(static_cast<AuroraDisplayMode>(g_displayMode));
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     aurora_set_disable_copy_filter(g_disableCopyFilter);
@@ -1661,6 +1663,18 @@ void HandleEvents(const AuroraEvent* events) noexcept {
             g_lastMouseActivity = Clock::now();
         }
     }
+}
+
+bool g_spinningCoins = RuntimeConfigFile::SpinningCoins(true);
+
+void SetSpinningCoins(bool enabled) noexcept {
+    g_spinningCoins = enabled;
+    AuroraSetTexturePatches(enabled);
+    RuntimeConfigFile::SetSpinningCoins(enabled);
+}
+
+bool SpinningCoins() noexcept {
+    return g_spinningCoins;
 }
 
 void SetShowFps(bool show) noexcept {

@@ -803,7 +803,7 @@ bool g_lastWide = true;
 
 // Cursor rows. Video: 0 tabs, 1 resolution, 2 match screen, 3 FPS, 4 OK. Keybinds: 0 tabs,
 // 1-12 the controls (two columns of six), 13 Reset Defaults, 14 OK.
-constexpr int kVideoOk = 4;
+constexpr int kVideoOk = 5;
 constexpr int kKeyRows = 6;
 constexpr int kKeyReset = 1 + Keybinds::kActionCount, kKeyOk = kKeyReset + 1;
 
@@ -935,26 +935,29 @@ void DrawVideoTab(const Canvas& c) {
     const bool match = scale <= 0.0f;
     const std::vector<VideoChoice> choices = VideoChoices();
     const VideoChoice shown = choices[CurrentChoice(choices)];
-    Text(c, "Resolution", -300, 95, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
-    Button(c, ChoiceLabel(shown), 105, 95, 270, g_ui.cursor == 1, !match, g_ui.frame);
-    Arrow(c, -50, 95, false, g_ui.cursor == 1, !match);
-    Arrow(c, 260, 95, true, g_ui.cursor == 1, !match);
+    Text(c, "Resolution", -300, 112, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
+    Button(c, ChoiceLabel(shown), 105, 112, 270, g_ui.cursor == 1, !match, g_ui.frame);
+    Arrow(c, -50, 112, false, g_ui.cursor == 1, !match);
+    Arrow(c, 260, 112, true, g_ui.cursor == 1, !match);
     if (!match) {
-        AddHitEvent(-50, 95, 54, 62, 1, kEvLeft);
-        AddHitEvent(260, 95, 54, 62, 1, kEvRight);
-        AddHitEvent(105, 95, 276, 62, 1, kEvRight);
+        AddHitEvent(-50, 112, 54, 56, 1, kEvLeft);
+        AddHitEvent(260, 112, 54, 56, 1, kEvRight);
+        AddHitEvent(105, 112, 276, 56, 1, kEvRight);
     }
-    Button(c, "Match Screen Resolution", 24, 25, 470, g_ui.cursor == 2, true, g_ui.frame);
-    Checkbox(c, -185, 25, match);
-    AddHit(0, 25, 480, 62, 2);
-    Button(c, "Show FPS Counter", 24, -45, 470, g_ui.cursor == 3, true, g_ui.frame);
-    Checkbox(c, -185, -45, settings_overlay::ShowFps());
-    AddHit(0, -45, 480, 62, 3);
+    Button(c, "Match Screen Resolution", 24, 54, 470, g_ui.cursor == 2, true, g_ui.frame);
+    Checkbox(c, -185, 54, match);
+    AddHit(0, 54, 480, 56, 2);
+    Button(c, "Show FPS Counter", 24, -4, 470, g_ui.cursor == 3, true, g_ui.frame);
+    Checkbox(c, -185, -4, settings_overlay::ShowFps());
+    AddHit(0, -4, 480, 56, 3);
+    Button(c, "Spinning Coins", 24, -62, 470, g_ui.cursor == 4, true, g_ui.frame);
+    Checkbox(c, -185, -62, settings_overlay::SpinningCoins());
+    AddHit(0, -62, 480, 56, 4);
     const char* hint = match ? "The screen's own resolution, filling the whole screen."
                        : !DisplaySettings::SurfaceWide() ? "Rendered at this many lines, then scaled to the screen."
                        : shown.wide                      ? "Fills the whole screen with a wider view."
                                                          : "16:9, with black bars at the sides.";
-    Text(c, hint, 0, -108, 21);
+    Text(c, g_ui.cursor == 4 ? "Animated coins and blocks. Off saves a little GPU work." : hint, 0, -116, 21);
     Button(c, "OK", 0, -kSettingsHeight / 2 + 43.0f, 232, g_ui.cursor == kVideoOk, true, g_ui.frame);
     AddHit(0, -kSettingsHeight / 2 + 43.0f, 240, 60, kVideoOk);
 }
@@ -1036,6 +1039,9 @@ void HandleSettings(bool left, bool right, bool up, bool down, bool confirm, boo
             ToggleMatchScreen();
         } else if (confirm && cursor == 3) {
             settings_overlay::SetShowFps(!settings_overlay::ShowFps());
+            g_settingsChanged = true;
+        } else if (confirm && cursor == 4) {
+            settings_overlay::SetSpinningCoins(!settings_overlay::SpinningCoins());
             g_settingsChanged = true;
         } else if (confirm && cursor == kVideoOk) {
             CloseSettings();
@@ -1457,13 +1463,14 @@ bool TapScreenUp() {
     return g_tapScreen.load(std::memory_order_acquire);
 }
 
-bool TakeSettingsChange(float& renderScale, bool& showFps, int& aspect) {
+bool TakeSettingsChange(float& renderScale, bool& showFps, int& aspect, bool& spinningCoins) {
     if (!g_settingsChanged.exchange(false)) {
         return false;
     }
     renderScale = settings_overlay::RenderScale();
     showFps = settings_overlay::ShowFps();
     aspect = settings_overlay::Aspect();
+    spinningCoins = settings_overlay::SpinningCoins();
     return true;
 }
 

@@ -17,6 +17,9 @@ void ReleaseControllers() noexcept;
 // FPS counter on or off (the Android menu sets it through JNI); saved to Config.toml.
 void SetShowFps(bool show) noexcept;
 bool ShowFps() noexcept;
+// Animated tiles (spinning coins, ? blocks...), on by default. Saved to Config.toml.
+void SetSpinningCoins(bool enabled) noexcept;
+bool SpinningCoins() noexcept;
 // Render scale: 1 = 480 lines, 0 = the window's (screen's) own resolution. Saved to Config.toml.
 void SetRenderScale(float scale) noexcept;
 float RenderScale() noexcept;

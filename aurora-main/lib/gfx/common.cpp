@@ -186,6 +186,14 @@ struct RenderPass {
   bool resolveLinearSampling = false;
   bool snapshotColorResolveSource = false;
   std::vector<tex_palette_conv::ConvRequest> paletteConvs;
+  // NSMBW: copies of this pass's resolve target into a region of another texture (add_resolve_patch).
+  struct Patch {
+    TextureHandle dst;
+    TextureHandle native;  // the resolve target scaled to the patch's own size
+    Range uniformRange;
+    uint32_t x = 0, y = 0, width = 0, height = 0;
+  };
+  std::vector<Patch> patches;
 };
 static std::vector<RenderPass> g_renderPasses;
 static u32 g_currentRenderPass = UINT32_MAX;
@@ -546,6 +554,33 @@ void push_draw_command(clear::DrawData data) {
 template <>
 PipelineRef pipeline_ref(const clear::PipelineConfig& config) {
   return find_pipeline(ShaderType::Clear, config, [=] { return create_pipeline(config); });
+}
+
+bool add_resolve_patch(const TextureHandle& source, TextureHandle dst, uint32_t x, uint32_t y, uint32_t width,
+                       uint32_t height) {
+  if (!source || !dst || width == 0 || height == 0 || dst->format != wgpu::TextureFormat::RGBA8Unorm ||
+      x + width > dst->size.width || y + height > dst->size.height || g_currentRenderPass >= g_renderPasses.size()) {
+    return false;
+  }
+  // The pass that resolves `source`: the most recent one with it as its target.
+  for (size_t i = g_currentRenderPass + 1; i-- > 0;) {
+    auto& pass = g_renderPasses[i];
+    if (pass.resolveTarget != source) {
+      continue;
+    }
+    // One scratch texture per patch size: the blits and copies are encoded in order.
+    static absl::flat_hash_map<uint64_t, TextureHandle> natives;
+    auto& native = natives[(static_cast<uint64_t>(width) << 32) | height];
+    if (!native) {
+      native = new_conv_texture(width, height, GX_TF_RGBA8, "GX resolve patch");
+    }
+    const std::array blitUniform{
+        0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 64.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+    };
+    pass.patches.push_back({std::move(dst), native, push_uniform(blitUniform), x, y, width, height});
+    return true;
+  }
+  return false;
 }
 
 void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
@@ -1437,6 +1472,25 @@ static void render_impl(std::vector<RenderPass>& renderPasses, wgpu::CommandEnco
             .height = static_cast<uint32_t>(passInfo.resolveRect.height),
             .depthOrArrayLayers = 1,
         };
+        cmd.CopyTextureToTexture(&src, &dst, &size);
+      }
+      for (const auto& patch : passInfo.patches) {
+        if (!patch.dst || !patch.native) {
+          continue;
+        }
+        tex_copy_conv::blit(cmd, tex_copy_conv::ConvRequest{
+                                     .fmt = GX_TF_RGBA8,
+                                     .srcView = passInfo.resolveTarget->sampleTextureView,
+                                     .uniformRange = patch.uniformRange,
+                                     .dst = patch.native,
+                                     .sampleFilter = tex_copy_conv::SampleFilter::Linear,
+                                 });
+        const wgpu::TexelCopyTextureInfo src{.texture = patch.native->texture};
+        const wgpu::TexelCopyTextureInfo dst{
+            .texture = patch.dst->texture,
+            .origin = wgpu::Origin3D{.x = patch.x, .y = patch.y},
+        };
+        const wgpu::Extent3D size{.width = patch.width, .height = patch.height, .depthOrArrayLayers = 1};
         cmd.CopyTextureToTexture(&src, &dst, &size);
       }
     }

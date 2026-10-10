@@ -470,6 +470,12 @@ void clear_copy_texture_cache() noexcept;
 void clear_display_copy_cache() noexcept;
 void set_display_copy_present_source() noexcept;
 void evict_copy_texture(const void* dest) noexcept;
+// NSMBW: the cached static textures whose RAM holds `dest` (a copy patching part of a texture).
+struct PatchTarget {
+  gfx::TextureHandle texture;
+  u32 x = 0, y = 0;
+};
+std::vector<PatchTarget> find_patch_targets(const void* dest);
 // Drops retired GX copy targets so they cannot outlive the destination they were recycled for.
 void prune_copy_texture_pool(const void* dest) noexcept;
 void evict_texture_object(u32 texObjId) noexcept;

@@ -469,6 +469,9 @@ void GXCopyDisp(void* dest, GXBool clear) {
   aurora::gx::set_display_copy_present_source();
 }
 
+std::atomic<bool> g_texturePatches{true};
+extern "C" void AuroraSetTexturePatches(bool enabled) { g_texturePatches.store(enabled, std::memory_order_relaxed); }
+
 void GXCopyTex(void* dest, GXBool clear) {
   g_statCopies.fetch_add(1, std::memory_order_relaxed);
   // Texture copies must see all earlier draws and state changes.
@@ -590,23 +593,21 @@ void GXCopyTex(void* dest, GXBool clear) {
   g_gxState.copyTextures[dest] = handle;
   // Keep the GPU copy and download it only if guest code reads the destination.
   // A copy smaller than its destination size patches a wider texture (NSMBW's animated tiles: coins,
-  // ? blocks). Reading it back each frame, laid out at that texture's pitch, animates the texture, but
-  // the 2 MB tile atlas is then re-decoded and re-uploaded every frame: about 1 ms a frame on a desktop
-  // CPU, but 60 -> 35 FPS on a Snapdragon 6 Gen 1. On by default except on Android, until the patch can
-  // be applied on the GPU; NSMBW_PATCH_READBACK=1 or 0 overrides.
+  // ? blocks, copied into the tile atlas every frame). The patch is applied to the atlas's GPU texture
+  // right after this copy resolves. Reading it back into RAM instead (NSMBW_PATCH_READBACK=1) works too
+  // but re-decodes the 2 MB atlas every frame: 60 -> 35 FPS on a Snapdragon 6 Gen 1.
   static const bool patchReadback = [] {
     const char* value = std::getenv("NSMBW_PATCH_READBACK");
-    if (value != nullptr && value[0] != 0) {
-      return value[0] != '0';
-    }
-#if defined(__ANDROID__)
-    return false;
-#else
-    return true;
-#endif
+    return value != nullptr && value[0] == '1';
   }();
-  const u32 patchStride =
-      patchReadback && g_gxState.texCopyDstWidth > logicalDstWidth ? g_gxState.texCopyDstWidth : 0;
+  const bool patch = g_gxState.texCopyDstWidth > logicalDstWidth && g_texturePatches.load(std::memory_order_relaxed);
+  if (patch && !patchReadback) {
+    for (auto& target : aurora::gx::find_patch_targets(dest)) {
+      aurora::gfx::add_resolve_patch(handle.handle, std::move(target.texture), target.x, target.y,
+                                     logicalDstWidth, logicalDstHeight);
+    }
+  }
+  const u32 patchStride = patch && patchReadback ? g_gxState.texCopyDstWidth : 0;
   aurora::gfx::efb_ram::schedule(dest, logicalDstWidth, logicalDstHeight, texCopyFmt, handle.handle, patchStride);
   // NSMBW: a draw after this copy must not merge into one before it: merged primitives are recorded
   // with the earlier draw and would render before the copy reads the EFB.

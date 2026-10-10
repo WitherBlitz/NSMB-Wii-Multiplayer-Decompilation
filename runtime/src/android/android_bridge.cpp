@@ -111,19 +111,20 @@ JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeTap(JNIEnv*, jcl
     NetplayUi::Tap(x, y);
 }
 
-// GameActivity.nativeTakeSettings: {render scale, show FPS 1/0, aspect} when the game's settings
+// GameActivity.nativeTakeSettings: {render scale, show FPS 1/0, aspect, spinning coins 1/0} when the game's settings
 // window changed them since the last call, else null; the app saves them for the next start.
 JNIEXPORT jfloatArray JNICALL Java_com_wither_nsmbw_GameActivity_nativeTakeSettings(JNIEnv* env, jclass)
 {
     float scale = 1.0f;
     bool showFps = false;
     int aspect = DisplaySettings::kAspectFill;
-    if (!NetplayUi::TakeSettingsChange(scale, showFps, aspect)) {
+    bool spinningCoins = true;
+    if (!NetplayUi::TakeSettingsChange(scale, showFps, aspect, spinningCoins)) {
         return nullptr;
     }
-    jfloatArray result = env->NewFloatArray(3);
-    const jfloat values[3] = {scale, showFps ? 1.0f : 0.0f, static_cast<jfloat>(aspect)};
-    env->SetFloatArrayRegion(result, 0, 3, values);
+    jfloatArray result = env->NewFloatArray(4);
+    const jfloat values[4] = {scale, showFps ? 1.0f : 0.0f, static_cast<jfloat>(aspect), spinningCoins ? 1.0f : 0.0f};
+    env->SetFloatArrayRegion(result, 0, 4, values);
     return result;
 }
 

@@ -552,6 +552,48 @@ gfx::TextureHandle get_tlut_texture(const GXTlutObj_& tlut) {
   return handle;
 }
 
+} // namespace
+
+// NSMBW: every cached static texture whose RAM contains `dest`, with the patch's place in it. A copy
+// into part of a texture (NSMBW's animated tiles patch the tile atlas) is then applied on the GPU.
+std::vector<PatchTarget> find_patch_targets(const void* dest) {
+  std::vector<PatchTarget> targets;
+  const auto* d = static_cast<const uint8_t*>(dest);
+  for (const auto& [key, entry] : s_staticTextureSourceCache) {
+    if (!entry.handle || key.data == nullptr || key.mips > 1) {
+      continue;
+    }
+    const auto* base = static_cast<const uint8_t*>(key.data);
+    const u32 size = GXGetTexBufferSize(static_cast<u16>(key.width), static_cast<u16>(key.height),
+                                        static_cast<GXTexFmt>(key.format), GX_FALSE, 0);
+    if (d < base || d >= base + size) {
+      continue;
+    }
+    u32 blockW = 4, blockH = 4, blockBytes = 32;
+    switch (static_cast<GXTexFmt>(key.format)) {
+    case GX_TF_I4:
+    case GX_TF_CMPR:
+      blockW = 8, blockH = 8;
+      break;
+    case GX_TF_I8:
+    case GX_TF_IA4:
+      blockW = 8;
+      break;
+    case GX_TF_RGBA8:
+      blockBytes = 64;
+      break;
+    default:
+      break;
+    }
+    const u32 blocksPerRow = (key.width + blockW - 1) / blockW;
+    const u32 block = static_cast<u32>(d - base) / blockBytes;
+    targets.push_back({entry.handle, (block % blocksPerRow) * blockW, (block / blocksPerRow) * blockH});
+  }
+  return targets;
+}
+
+namespace {
+
 gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
   ZoneScoped;
   const bool canCacheUpload = !obj.no_cache() && can_cache_static_texture_upload(obj);

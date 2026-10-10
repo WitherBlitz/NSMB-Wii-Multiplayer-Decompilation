@@ -33,6 +33,6 @@ void Tap(float x, float y);
 bool TapScreenUp();
 // The settings window changed the render scale, the aspect or the FPS counter since the last call:
 // the Android app copies them into its own settings, which it writes to Config.toml at every start.
-bool TakeSettingsChange(float& renderScale, bool& showFps, int& aspect);
+bool TakeSettingsChange(float& renderScale, bool& showFps, int& aspect, bool& spinningCoins);
 
 } // namespace NetplayUi
