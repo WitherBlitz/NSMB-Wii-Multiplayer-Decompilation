@@ -316,3 +316,5 @@ License for more details.
 
 Not affiliated with, endorsed by, or associated with Nintendo. New Super Mario Bros. Wii is a
 trademark of Nintendo.
+
+**I plan to fully decompile this game in the near future, but for now with the time I have at the moment, this'll have to do. At first, this project was to just see the limits of what I can do with Opus, but now I'd like to see it to the end haha. I'll use this as a base for some of the features and copy them over once I decompile the game. Sorry for the misleading repo name! I changed my mind midway through the creation of this project.**
