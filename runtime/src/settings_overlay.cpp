@@ -97,13 +97,10 @@ int g_frameInterpolationMode = [] {
         return 1;
     case 180:
         return 2;
-    case 240:
-        return 3;
     default:
         return 0;
     }
 }();
-bool g_vsync = RuntimeConfigFile::VSync(true);
 int g_displayMode = [] {
     const std::string mode = RuntimeConfigFile::DisplayMode("windowed");
     if (mode == "borderless") {
@@ -195,7 +192,7 @@ constexpr std::array<AspectItem, 3> kAspects = {{
     {"Fill Window", DisplaySettings::kAspectFill},
 }};
 
-constexpr std::array<uint32_t, 4> kFrameInterpolationTargetFps{0, 120, 180, 240};
+constexpr std::array<uint32_t, 3> kFrameInterpolationTargetFps{0, 120, 180};
 
 bool IsHighResolutionScale(float scale) {
     return std::fabs(scale - 6.0f) < 0.001f || std::fabs(scale - 8.0f) < 0.001f;
@@ -1144,8 +1141,8 @@ void DrawGraphicsSettings() {
             "Requests the closest native-resolution display mode to the output frame "
             "rate (60 Hz, or the frame interpolation target).");
     }
-    constexpr std::array<const char*, 4> kFrameInterpolationModes{
-        "Off", "120 FPS", "180 FPS", "240 FPS",
+    constexpr std::array<const char*, 3> kFrameInterpolationModes{
+        "Off", "120 FPS", "180 FPS",
     };
     const char* currentFrameInterpolationMode =
         kFrameInterpolationModes[static_cast<size_t>(g_frameInterpolationMode)];
@@ -1600,7 +1597,6 @@ void InitializeRuntimeSettings() noexcept {
     const uint32_t targetFps = kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)];
     LimitResolutionForFrameRate();
     aurora_set_frame_interpolation_fps(targetFps);
-    aurora_set_vsync(g_vsync);
     aurora_set_display_mode(static_cast<AuroraDisplayMode>(g_displayMode));
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     aurora_set_disable_copy_filter(g_disableCopyFilter);
@@ -1690,29 +1686,6 @@ void SetAspect(int32_t mode) noexcept {
 
 int32_t Aspect() noexcept {
     return DisplaySettings::Latest().aspect;
-}
-
-void SetVSync(bool enabled) noexcept {
-    g_vsync = enabled;
-    aurora_set_vsync(enabled);
-    RuntimeConfigFile::SetVSync(enabled);
-}
-
-bool VSync() noexcept {
-    return g_vsync;
-}
-
-// 0: 60 FPS (the game's own), 1-3: 120, 180, 240 through frame interpolation.
-void SetFrameRateCap(int index) noexcept {
-    g_frameInterpolationMode = std::clamp(index, 0, static_cast<int>(kFrameInterpolationTargetFps.size()) - 1);
-    const uint32_t targetFps = kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)];
-    aurora_set_frame_interpolation_fps(targetFps);
-    RuntimeConfigFile::SetFrameInterpolationFps(targetFps);
-    LimitResolutionForFrameRate();
-}
-
-int FrameRateCap() noexcept {
-    return g_frameInterpolationMode;
 }
 
 void ReleaseControllers() noexcept {

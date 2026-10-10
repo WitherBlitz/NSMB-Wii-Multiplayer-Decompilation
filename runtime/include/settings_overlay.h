@@ -23,10 +23,4 @@ float RenderScale() noexcept;
 // DisplaySettings' aspect (4:3, 16:9, Fill), including a change not yet applied. Saved to Config.toml.
 void SetAspect(int32_t mode) noexcept;
 int32_t Aspect() noexcept;
-// V-Sync (on by default) and the frame rate (0: 60, 1: 120, 2: 180, 3: 240 FPS, the last three
-// through frame interpolation). Saved to Config.toml.
-void SetVSync(bool enabled) noexcept;
-bool VSync() noexcept;
-void SetFrameRateCap(int index) noexcept;
-int FrameRateCap() noexcept;
 } // namespace settings_overlay

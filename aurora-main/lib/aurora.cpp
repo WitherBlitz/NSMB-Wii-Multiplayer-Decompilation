@@ -1445,12 +1445,6 @@ bool begin_frame_impl(bool pumpEvents, ImGuiFramePolicy imguiPolicy, bool* imgui
                                             webgpu::g_graphicsConfig.surfaceConfiguration.height)) {
       window::sync_frame_buffer_size();
     }
-    // A V-Sync change reconfigures the swapchain at this same ordered frame boundary.
-    if (webgpu::take_vsync_change()) {
-      window::SurfaceLock surfaceLock;
-      const auto size = window::get_window_size();
-      webgpu::resize_swapchain(size.fb_width, size.fb_height, size.native_fb_width, size.native_fb_height, true);
-    }
   } else if (window::is_paused()) {
     return false;
   }
@@ -2000,8 +1994,6 @@ void aurora_get_present_timing(AuroraPresentTiming* timing) {
     *timing = aurora::snapshot_present_timing();
   }
 }
-void aurora_set_vsync(bool enabled) { aurora::webgpu::request_vsync(enabled); }
-bool aurora_get_vsync() { return aurora::webgpu::vsync_enabled(); }
 void aurora_set_frame_interpolation_fps(uint32_t targetFps) {
 #ifdef AURORA_ENABLE_GX
   aurora::gx::set_frame_interpolation_fps(targetFps);

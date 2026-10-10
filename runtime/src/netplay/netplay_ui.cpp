@@ -803,7 +803,7 @@ bool g_lastWide = true;
 
 // Cursor rows. Video: 0 tabs, 1 resolution, 2 match screen, 3 FPS, 4 OK. Keybinds: 0 tabs,
 // 1-12 the controls (two columns of six), 13 Reset Defaults, 14 OK.
-constexpr int kVideoOk = 6;
+constexpr int kVideoOk = 4;
 constexpr int kKeyRows = 6;
 constexpr int kKeyReset = 1 + Keybinds::kActionCount, kKeyOk = kKeyReset + 1;
 
@@ -930,48 +930,31 @@ void DrawSettingsTabs(const Canvas& c) {
     }
 }
 
-// Rows of the Video tab (layout units).
-constexpr float kRowRes = 118.0f, kRowMatch = 66.0f, kRowRate = 14.0f, kRowVSync = -38.0f, kRowFps = -90.0f;
-constexpr const char* kFrameRates[] = {"60 FPS", "120 FPS", "180 FPS", "240 FPS"};
-
 void DrawVideoTab(const Canvas& c) {
     const float scale = settings_overlay::RenderScale();
     const bool match = scale <= 0.0f;
     const std::vector<VideoChoice> choices = VideoChoices();
     const VideoChoice shown = choices[CurrentChoice(choices)];
-    Text(c, "Resolution", -300, kRowRes, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
-    Button(c, ChoiceLabel(shown), 105, kRowRes, 270, g_ui.cursor == 1, !match, g_ui.frame);
-    Arrow(c, -50, kRowRes, false, g_ui.cursor == 1, !match);
-    Arrow(c, 260, kRowRes, true, g_ui.cursor == 1, !match);
+    Text(c, "Resolution", -300, 95, 26, 0, match ? 0xA0A0A0FFu : 0xFFFFFFFFu);
+    Button(c, ChoiceLabel(shown), 105, 95, 270, g_ui.cursor == 1, !match, g_ui.frame);
+    Arrow(c, -50, 95, false, g_ui.cursor == 1, !match);
+    Arrow(c, 260, 95, true, g_ui.cursor == 1, !match);
     if (!match) {
-        AddHitEvent(-50, kRowRes, 54, 50, 1, kEvLeft);
-        AddHitEvent(260, kRowRes, 54, 50, 1, kEvRight);
-        AddHitEvent(105, kRowRes, 276, 50, 1, kEvRight);
+        AddHitEvent(-50, 95, 54, 62, 1, kEvLeft);
+        AddHitEvent(260, 95, 54, 62, 1, kEvRight);
+        AddHitEvent(105, 95, 276, 62, 1, kEvRight);
     }
-    Button(c, "Match Screen Resolution", 24, kRowMatch, 470, g_ui.cursor == 2, true, g_ui.frame);
-    Checkbox(c, -185, kRowMatch, match);
-    AddHit(0, kRowMatch, 480, 50, 2);
-    // Above 60, frame interpolation draws the frames between the game's own.
-    Text(c, "Frame Rate", -300, kRowRate, 26, 0);
-    Button(c, kFrameRates[settings_overlay::FrameRateCap()], 105, kRowRate, 270, g_ui.cursor == 3, true, g_ui.frame);
-    Arrow(c, -50, kRowRate, false, g_ui.cursor == 3);
-    Arrow(c, 260, kRowRate, true, g_ui.cursor == 3);
-    AddHitEvent(-50, kRowRate, 54, 50, 3, kEvLeft);
-    AddHitEvent(260, kRowRate, 54, 50, 3, kEvRight);
-    AddHitEvent(105, kRowRate, 276, 50, 3, kEvRight);
-    Button(c, "V-Sync", 24, kRowVSync, 470, g_ui.cursor == 4, true, g_ui.frame);
-    Checkbox(c, -185, kRowVSync, settings_overlay::VSync());
-    AddHit(0, kRowVSync, 480, 50, 4);
-    Button(c, "Show FPS Counter", 24, kRowFps, 470, g_ui.cursor == 5, true, g_ui.frame);
-    Checkbox(c, -185, kRowFps, settings_overlay::ShowFps());
-    AddHit(0, kRowFps, 480, 50, 5);
-    const char* hint = g_ui.cursor == 3 ? "Above 60, extra frames are drawn between the game's own (experimental)."
-                       : g_ui.cursor == 4 ? "Waits for the display: smoother frame pacing, no tearing."
-                       : match ? "The screen's own resolution, filling the whole screen."
+    Button(c, "Match Screen Resolution", 24, 25, 470, g_ui.cursor == 2, true, g_ui.frame);
+    Checkbox(c, -185, 25, match);
+    AddHit(0, 25, 480, 62, 2);
+    Button(c, "Show FPS Counter", 24, -45, 470, g_ui.cursor == 3, true, g_ui.frame);
+    Checkbox(c, -185, -45, settings_overlay::ShowFps());
+    AddHit(0, -45, 480, 62, 3);
+    const char* hint = match ? "The screen's own resolution, filling the whole screen."
                        : !DisplaySettings::SurfaceWide() ? "Rendered at this many lines, then scaled to the screen."
                        : shown.wide                      ? "Fills the whole screen with a wider view."
                                                          : "16:9, with black bars at the sides.";
-    Text(c, hint, 0, -133, 19);
+    Text(c, hint, 0, -108, 21);
     Button(c, "OK", 0, -kSettingsHeight / 2 + 43.0f, 232, g_ui.cursor == kVideoOk, true, g_ui.frame);
     AddHit(0, -kSettingsHeight / 2 + 43.0f, 240, 60, kVideoOk);
 }
@@ -1051,14 +1034,7 @@ void HandleSettings(bool left, bool right, bool up, bool down, bool confirm, boo
             StepVideo(left ? -1 : 1, confirm);
         } else if (confirm && cursor == 2) {
             ToggleMatchScreen();
-        } else if (cursor == 3 && (left || right || confirm)) {
-            const int count = static_cast<int>(std::size(kFrameRates));
-            int next = settings_overlay::FrameRateCap() + (left ? -1 : 1);
-            next = confirm ? (next + count) % count : std::clamp(next, 0, count - 1);
-            settings_overlay::SetFrameRateCap(next);
-        } else if (confirm && cursor == 4) {
-            settings_overlay::SetVSync(!settings_overlay::VSync());
-        } else if (confirm && cursor == 5) {
+        } else if (confirm && cursor == 3) {
             settings_overlay::SetShowFps(!settings_overlay::ShowFps());
             g_settingsChanged = true;
         } else if (confirm && cursor == kVideoOk) {
