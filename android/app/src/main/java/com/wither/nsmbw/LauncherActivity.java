@@ -50,7 +50,7 @@ public final class LauncherActivity extends Activity {
     /** Set by the game's "Start Menu": show this screen even with Skip Start Menu on. */
     static final String EXTRA_SHOW_START_MENU = "showStartMenu";
 
-    static final String PROJECT_URL = "https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Decompilation";
+    static final String PROJECT_URL = "https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Recompilation";
 
     private static final String DOLPHIN_STEPS =
             "Use your own USA New Super Mario Bros. Wii (SMNE01, revision 1). Easiest: in Dolphin on a "
