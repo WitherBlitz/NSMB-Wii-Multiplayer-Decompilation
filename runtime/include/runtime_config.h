@@ -1130,6 +1130,12 @@ inline std::filesystem::path ResolvedDvdRoot() {
     return configured.empty() ? std::filesystem::path{} : ResolveRelativeToConfig(configured);
 }
 
+// NSMBW: a game folder for this run only, not saved (a "game" folder beside the program, so each
+// install plays its own game while they all share Documents\MarioWiiSaveData).
+inline void UseDvdRootForThisRun(const std::filesystem::path& path) {
+    Mutable().dvdRoot = PathToUtf8(path);
+}
+
 // The game folder the player picked at first start (GameFolder::EnsureConfigured).
 inline bool SetDvdRoot(const std::filesystem::path& path) {
     const std::string value = PathToUtf8(path);

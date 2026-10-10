@@ -5,6 +5,8 @@
 #include "runtime_log.h"
 #include "system_bridge.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -13,6 +15,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace RuntimeNandPath {
 
@@ -53,8 +57,72 @@ inline std::filesystem::path ResolveConfiguredPath(const std::string& value) {
     return RuntimeConfigFile::ResolveRelativeToConfig(value);
 }
 
+// NSMBW: which game folder this is, as a fingerprint of its files (relative path and size of each),
+// so a mod of the game (New Super Mario Bros. Wii 2 - The Next Levels...) is told apart from the
+// original. Empty when there is no readable game folder.
+inline std::string GameSaveKey() {
+    const std::filesystem::path root = RuntimeConfigFile::ResolvedDvdRoot();
+    std::error_code ec;
+    if (root.empty() || !std::filesystem::is_directory(root, ec)) {
+        return {};
+    }
+    std::vector<std::pair<std::string, uint64_t>> files;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code fileError;
+        if (it->is_regular_file(fileError)) {
+            const auto relative = std::filesystem::relative(it->path(), root, fileError).generic_u8string();
+            files.emplace_back(std::string(relative.begin(), relative.end()), it->file_size(fileError));
+        }
+    }
+    if (files.empty()) {
+        return {};
+    }
+    std::sort(files.begin(), files.end());
+    uint64_t hash = 1469598103934665603ull;
+    const auto mix = [&hash](const void* data, size_t size) {
+        for (size_t i = 0; i < size; ++i) {
+            hash = (hash ^ static_cast<const uint8_t*>(data)[i]) * 1099511628211ull;
+        }
+    };
+    for (const auto& [name, size] : files) {
+        mix(name.data(), name.size());
+        mix(&size, sizeof(size));
+    }
+    char text[17];
+    std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(hash));
+    return text;
+}
+
+// The saves: NAND in the user data folder belongs to the first game played with it (its key in
+// NAND/.game); every other game gets Saves/<key>/NAND, so the original and a mod don't share files.
 inline std::filesystem::path ManagedNandRootPath() {
-    return RuntimeConfigFile::ApplicationDataDirectory() / "NAND";
+    static const std::filesystem::path path = [] {
+        const std::filesystem::path shared = RuntimeConfigFile::ApplicationDataDirectory() / "NAND";
+        const std::string key = GameSaveKey();
+        if (key.empty()) {
+            return shared;
+        }
+        const std::filesystem::path owner = shared / ".game";
+        std::string ownerKey;
+        {
+            std::ifstream in(owner);
+            std::getline(in, ownerKey);
+        }
+        if (ownerKey.empty()) {
+            std::error_code ec;
+            std::filesystem::create_directories(shared, ec);
+            std::ofstream out(owner, std::ios::trunc);
+            out << key << "\n" << RuntimeConfigFile::PathToUtf8(RuntimeConfigFile::ResolvedDvdRoot()) << "\n";
+            return shared;
+        }
+        if (ownerKey == key) {
+            return shared;
+        }
+        const std::filesystem::path own = RuntimeConfigFile::ApplicationDataDirectory() / "Saves" / key / "NAND";
+        RT_LOGF(RT_TAG_NAND, "this game's saves: %s\n", RuntimeConfigFile::PathToUtf8(own).c_str());
+        return own;
+    }();
+    return path;
 }
 
 inline std::optional<std::filesystem::path> BootstrapPayloadPath() {

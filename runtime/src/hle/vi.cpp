@@ -21,6 +21,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -698,7 +699,8 @@ void PaceToRetraceBoundary(Clock::time_point deadline) {
 struct FrameTimes {
     Clock::time_point windowStart{};
     Clock::time_point lastPresentEnd{};
-    double gameMs = 0, endFrameMs = 0, paceMs = 0, worstMs = 0;
+    double gameMs = 0, endFrameMs = 0, paceMs = 0, worstMs = 0, sumSq = 0;
+    int slow = 0;
     int frames = 0;
 };
 
@@ -808,6 +810,8 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
             times.endFrameMs += ms(paceStart - endFrameStart);
             times.paceMs += ms(now - paceStart);
             times.worstMs = std::max(times.worstMs, frame);
+            times.sumSq += frame * frame;
+            times.slow += frame > 20.0 ? 1 : 0;
             ++times.frames;
         } else {
             times.windowStart = now;
@@ -822,9 +826,10 @@ void VI_HLE_PresentFrame(bool presentedXfb, bool paceToRetrace) {
             AuroraTakeCopyStats(&copies, &creates);
             RT_LOGF(RT_TAG_VI,
                     "fps %.1f: game %.2f ms (gx %.2f ms, lock wait %.2f ms, %.0f draws, %.1f copies, %.1f new copy "
-                    "textures), end_frame %.2f ms, pace %.2f ms, worst frame %.1f ms\n",
+                    "textures), end_frame %.2f ms, pace %.2f ms, worst frame %.1f ms, jitter %.2f ms, %d over 20 ms\n",
                     n * 1000.0 / window, times.gameMs / n, gxNanos / 1e6 / n, lockNanos / 1e6 / n, draws / n,
-                    copies / n, creates / n, times.endFrameMs / n, times.paceMs / n, times.worstMs);
+                    copies / n, creates / n, times.endFrameMs / n, times.paceMs / n, times.worstMs,
+                    std::sqrt(std::max(0.0, times.sumSq / n - (window / n) * (window / n))), times.slow);
             times = FrameTimes{};
             times.windowStart = now;
             times.lastPresentEnd = now;

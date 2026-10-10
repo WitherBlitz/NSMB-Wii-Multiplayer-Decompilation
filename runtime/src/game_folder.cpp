@@ -118,17 +118,25 @@ std::string Problem(const fs::path& root) {
 }
 
 bool EnsureConfigured() {
+#if defined(_WIN32)
+    // A "game" folder next to the program needs no questions, and wins over the saved folder: every
+    // install shares Documents\MarioWiiSaveData, so this is how two installs play two games (say the
+    // original and a mod), each with its own saves (nand_path.h keeps saves per game).
+    if (const fs::path beside = Find(ProgramDirectory() / "game"); !beside.empty() && Problem(beside).empty()) {
+        if (RuntimeConfigFile::DvdRoot().empty()) {
+            RuntimeConfigFile::SetDvdRoot(beside);
+        } else {
+            RuntimeConfigFile::UseDvdRootForThisRun(beside);
+        }
+        RT_LOGF(RT_TAG_RUNTIME, "game folder: %s\n", RuntimeConfigFile::PathToUtf8(beside).c_str());
+        return true;
+    }
+#endif
     const fs::path configured = Find(RuntimeConfigFile::ResolvedDvdRoot());
     if (!configured.empty() && Problem(configured).empty()) {
         return true;
     }
 #if defined(_WIN32)
-    // A "game" folder next to the program needs no questions.
-    if (const fs::path beside = Find(ProgramDirectory() / "game"); !beside.empty() && Problem(beside).empty()) {
-        RuntimeConfigFile::SetDvdRoot(beside);
-        RT_LOGF(RT_TAG_RUNTIME, "game folder: %s\n", RuntimeConfigFile::PathToUtf8(beside).c_str());
-        return true;
-    }
     std::wstring message = kSteps;
     if (!configured.empty()) {
         message = Widen(Problem(configured)) + L"\n\n" + message;

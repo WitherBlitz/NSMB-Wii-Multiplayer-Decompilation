@@ -589,11 +589,22 @@ void GXCopyTex(void* dest, GXBool clear) {
   aurora::gx::notify_copy_texture_created();
   g_gxState.copyTextures[dest] = handle;
   // Keep the GPU copy and download it only if guest code reads the destination.
-  // A copy smaller than its destination size patches a wider texture (NSMBW's animated tiles). Reading
-  // it back each frame, laid out at that texture's pitch, animates the texture, but the 2 MB tile atlas
-  // is then re-decoded and re-uploaded every frame (about 4 ms a frame on a desktop CPU, far more on
-  // phones), so it is opt-in (NSMBW_PATCH_READBACK) until the patch can be applied on the GPU.
-  static const bool patchReadback = std::getenv("NSMBW_PATCH_READBACK") != nullptr;
+  // A copy smaller than its destination size patches a wider texture (NSMBW's animated tiles: coins,
+  // ? blocks). Reading it back each frame, laid out at that texture's pitch, animates the texture, but
+  // the 2 MB tile atlas is then re-decoded and re-uploaded every frame: about 1 ms a frame on a desktop
+  // CPU, but 60 -> 35 FPS on a Snapdragon 6 Gen 1. On by default except on Android, until the patch can
+  // be applied on the GPU; NSMBW_PATCH_READBACK=1 or 0 overrides.
+  static const bool patchReadback = [] {
+    const char* value = std::getenv("NSMBW_PATCH_READBACK");
+    if (value != nullptr && value[0] != 0) {
+      return value[0] != '0';
+    }
+#if defined(__ANDROID__)
+    return false;
+#else
+    return true;
+#endif
+  }();
   const u32 patchStride =
       patchReadback && g_gxState.texCopyDstWidth > logicalDstWidth ? g_gxState.texCopyDstWidth : 0;
   aurora::gfx::efb_ram::schedule(dest, logicalDstWidth, logicalDstHeight, texCopyFmt, handle.handle, patchStride);
