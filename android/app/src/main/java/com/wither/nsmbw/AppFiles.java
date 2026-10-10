@@ -144,7 +144,33 @@ final class AppFiles {
                 + "\n[discord]\nenabled = false\n"
                 + "\n[paths]\n"
                 + "dvd_root = '" + game + "'\n";
-        writeText(config, text);
+        writeText(config, text + keptSections(config));
+    }
+
+    /** Tables of the old Config.toml the app doesn't write (the game's own: keyboard keybinds...). */
+    private static final java.util.Set<String> APP_TABLES =
+            new java.util.HashSet<>(java.util.Arrays.asList("video", "audio", "network", "discord", "paths"));
+
+    private static String keptSections(File config) {
+        if (!config.isFile()) return "";
+        final StringBuilder kept = new StringBuilder();
+        try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new java.io.FileInputStream(config), java.nio.charset.StandardCharsets.UTF_8))) {
+            boolean keep = false;
+            String line;
+            while ((line = in.readLine()) != null) {
+                final String trimmed = line.trim();
+                if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                    final String name = trimmed.substring(1, trimmed.length() - 1).trim();
+                    keep = !APP_TABLES.contains(name);
+                    if (keep) kept.append('\n');
+                }
+                if (keep) kept.append(line).append('\n');
+            }
+        } catch (IOException e) {
+            android.util.Log.w("NSMBW", "could not read the old Config.toml", e);
+        }
+        return kept.toString();
     }
 
     private static String apkStamp(Context context) {
