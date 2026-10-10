@@ -133,6 +133,7 @@ final class AppFiles {
                 + "skip_unready_pipelines = true\n"
                 + "disable_copy_filter = true\n"
                 + "show_fps = " + settings.showFps() + "\n"
+                + "spinning_coins = " + settings.spinningCoins() + "\n"
                 + "texture_replacements = false\n"
                 + "texture_dumps = false\n"
                 + "\n[audio]\n"

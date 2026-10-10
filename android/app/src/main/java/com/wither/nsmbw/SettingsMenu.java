@@ -51,6 +51,7 @@ final class SettingsMenu {
             "Aspect Ratio: " + aspectLabel(settings.aspectMode()),
             "Render Resolution: " + AppSettings.resolutionLabel(settings.resolutionScale()),
             "FPS Counter: " + (settings.showFps() ? "On" : "Off"),
+            "Spinning Coins: " + (settings.spinningCoins() ? "On" : "Off"),
             "Graphics Compatibility: " + gpuCompatLabel(settings.gpuCompat()),
         };
         new AlertDialog.Builder(activity)
@@ -59,6 +60,7 @@ final class SettingsMenu {
                     if (which == 0) showAspectChoice();
                     else if (which == 1) showResolutionChoice();
                     else if (which == 2) { settings.setShowFps(!settings.showFps()); save(); showDisplayMenu(); }
+                    else if (which == 3) { settings.setSpinningCoins(!settings.spinningCoins()); save(); showDisplayMenu(); }
                     else showGpuCompatChoice();
                 })
                 .setNegativeButton("Back", (dialog, which) -> showMain())
